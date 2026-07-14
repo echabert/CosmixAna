@@ -5,6 +5,7 @@ A Dash-based cosmic detector analyzer for collecting, visualizing, and fitting c
 ## What it does
 
 - Runs simulated detector measurements with operator name, duration, angle, count rates, and coincidences.
+- Simulation needs to be replaced by real data taking
 - Persists measurements to `detector_measurements.csv`.
 - Provides multiple Dash pages:
   - Home page with measurement controls and recent entries
@@ -45,11 +46,15 @@ pip install dash pandas plotly numpy scipy
 
 With the virtual environment active:
 
+To launch the code in a canvas:
 ```bash
-python detector_app.py
+./.venv/bin/python desktop_launcher.py
 ```
-
-Then open the local Dash URL shown in the terminal.
+To launch the code on a webpage:
+```bash
+./.venv/bin/python run_app.py
+```
+Then open the local Dash URL  http://127.0.0.1:8050/ in a web browser.
 
 ## Usage
 
@@ -63,3 +68,5 @@ Then open the local Dash URL shown in the terminal.
 - Data is stored in `detector_measurements.csv` in the project root.
 - The angle fit model is explicitly shown as `f(θ) = A·cos(θ)^n + B` in the UI when the fit is activated.
 - The app supports English and French via the language selector.
+- dectector_measurement.csv needs to be reset
+- the function update_dashboard of the file detector_app.py needs to be updated to call a function what will run the real data taking.
