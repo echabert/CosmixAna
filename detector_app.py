@@ -23,6 +23,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "detector_measurements.csv"
 ANGLE_PARAMETERS_FILE = BASE_DIR / "def_param.cfi"
 POISSON_ACQUISITION_DURATION = 60
+POISSON_ACQUISITION_ANGLE = 90
 
 # Simple translations map for UI strings
 TRANSLATIONS = {
@@ -43,7 +44,7 @@ TRANSLATIONS = {
         "run_button": "Run measurement",
         "progress_label": "Measurement progress: {}%",
         "latest_measurements": "All Measurements",
-        "poisson_h2": "Poisson law check (60-second acquisitions)",
+        "poisson_h2": "Poisson law check (60-second acquisitions at 90°)",
         "current_distributions": "Current distributions",
         "activate_fit": "Activate fit",
         "click_fit_hint": "Click the fit button to overlay a Poisson fit on each histogram.",
@@ -64,10 +65,10 @@ TRANSLATIONS = {
         "angle_tendency_curve": "Tendency curve",
         "no_data": "No data yet",
         "no_angle_data": "No measurements at 90°",
-        "no_60s": "No 60-second runs for {}",
+        "no_60s": "No 60-second runs at 90° for {}",
         "no_timestamps": "No valid timestamps for {}",
-        "histogram_title": "Histogram of {} (60-second runs)",
-        "histogram_over_time": "Histogram of {} over time (60-second runs)",
+        "histogram_title": "Histogram of {} (60-second runs at 90°)",
+        "histogram_over_time": "Histogram of {} over time (60-second runs at 90°)",
         "count_label": "Count",
         "mean_annotation": "Mean = {} ± {}",
         "play_label": "Play",
@@ -98,7 +99,7 @@ TRANSLATIONS = {
         "run_button": "Exécuter la mesure",
         "progress_label": "Progression de la mesure : {}%",
         "latest_measurements": "Toutes les mesures",
-        "poisson_h2": "Vérification de la loi de Poisson (prises de 60 secondes)",
+        "poisson_h2": "Vérification de la loi de Poisson (prises de 60 secondes à 90°)",
         "current_distributions": "Distributions actuelles",
         "activate_fit": "Activer l'ajustement",
         "click_fit_hint": "Cliquez sur le bouton d'ajustement pour superposer un ajustement de Poisson sur chaque histogramme.",
@@ -119,10 +120,10 @@ TRANSLATIONS = {
         "angle_tendency_curve": "Courbe de tendance",
         "no_data": "Pas encore de données",
         "no_angle_data": "Aucune mesure à 90°",
-        "no_60s": "Aucune prise de 60 secondes pour {}",
+        "no_60s": "Aucune prise de 60 secondes à 90° pour {}",
         "no_timestamps": "Aucun horodatage valide pour {}",
-        "histogram_title": "Histogramme de {} (prises de 60 secondes)",
-        "histogram_over_time": "Histogramme de {} au fil du temps (prises de 60 secondes)",
+        "histogram_title": "Histogramme de {} (prises de 60 secondes à 90°)",
+        "histogram_over_time": "Histogramme de {} au fil du temps (prises de 60 secondes à 90°)",
         "count_label": "Nombre",
         "mean_annotation": "Moyenne = {} ± {}",
         "play_label": "Lire",
@@ -631,10 +632,19 @@ def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str 
     )
 
 
+def _filter_poisson_measurements(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "duration" not in df.columns or "angle" not in df.columns:
+        return df.iloc[0:0].copy()
+    return df.loc[
+        (df["duration"] == POISSON_ACQUISITION_DURATION)
+        & (df["angle"] == POISSON_ACQUISITION_ANGLE)
+    ].copy()
+
+
 def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lang: str = "fr"):
     if df is None:
         df = load_measurements(DATA_FILE)
-    df = df.loc[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
+    df = _filter_poisson_measurements(df)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     summary = build_comparison_summary(df)
 
@@ -967,7 +977,7 @@ def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, ti
     if df.empty or column not in df.columns:
         return {"title": title, "mu": 0.0, "chi2_probability": 1.0, "expected_counts": [], "bin_centers": []}
 
-    filtered_df = df[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
+    filtered_df = _filter_poisson_measurements(df)
     if filtered_df.empty:
         return {"title": title, "mu": 0.0, "chi2_probability": 1.0, "expected_counts": [], "bin_centers": []}
 
@@ -979,32 +989,25 @@ def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, ti
         return {"title": title, "mu": 0.0, "chi2_probability": 1.0, "expected_counts": [], "bin_centers": []}
 
     mu = float(values.mean())
-    histogram_max = max(10, int(np.ceil(values.max())) + 1)
-    edges = np.linspace(0, histogram_max, 11)
-    counts, _ = np.histogram(values, bins=10, range=(0, histogram_max))
-    expected_counts = []
-    for index in range(len(edges) - 1):
-        lower = edges[index]
-        upper = edges[index + 1]
-        k_values = np.arange(int(np.floor(lower)), int(np.ceil(upper)) + 1)
-        k_values = k_values[(k_values >= lower) & (k_values < upper)]
-        if index == len(edges) - 2:
-            k_values = k_values[k_values <= int(np.ceil(upper))]
-        if len(k_values) == 0:
-            expected_counts.append(0.0)
-            continue
-        probabilities = poisson_pmf(k_values, mu)
-        expected_counts.append(float(len(values) * np.sum(probabilities)))
+    observed_counts = np.rint(values).astype(int).to_numpy()
+    max_observed = int(observed_counts.max())
+    fit_max = max(max_observed, int(np.ceil(mu + 6 * np.sqrt(mu))), 10)
+    count_values = np.arange(fit_max + 1)
+    probabilities = poisson_pmf(count_values, mu)
+    expected_counts = len(values) * probabilities
 
-    expected_counts = np.array(expected_counts, dtype=float)
-    non_zero = expected_counts > 0
+    observed_histogram = np.bincount(observed_counts, minlength=fit_max + 1)
+    tail_expected = len(values) * max(0.0, 1.0 - float(probabilities.sum()))
+    observed_for_chi2 = np.append(observed_histogram, 0)
+    expected_for_chi2 = np.append(expected_counts, tail_expected)
+    non_zero = expected_for_chi2 > 0
     chi2_stat = 0.0
     if np.any(non_zero):
-        observed = counts[non_zero]
-        expected = expected_counts[non_zero]
+        observed = observed_for_chi2[non_zero]
+        expected = expected_for_chi2[non_zero]
         chi2_stat = float(np.sum(np.square(observed - expected) / expected))
 
-    dof = max(1, len(counts) - 2)
+    dof = max(1, int(np.count_nonzero(non_zero)) - 2)
     chi2_probability = _chi2_survival_function(chi2_stat, dof)
 
     return {
@@ -1012,7 +1015,7 @@ def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, ti
         "mu": mu,
         "chi2_probability": chi2_probability,
         "expected_counts": expected_counts,
-        "bin_centers": (edges[:-1] + edges[1:]) / 2,
+        "bin_centers": count_values,
     }
 
 
@@ -1023,7 +1026,7 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
     if df.empty or column not in df.columns:
         return px.scatter(title=t.get("no_data", "No data yet"))
 
-    filtered_df = df[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
+    filtered_df = _filter_poisson_measurements(df)
     if filtered_df.empty:
         return px.scatter(title=t["no_60s"].format(title))
 
@@ -1037,9 +1040,16 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
     if values.empty:
         return px.scatter(title=t["no_60s"].format(title))
 
-    histogram_max = max(10, int(np.ceil(values.max())) + 1)
-    fig = px.histogram(filtered_df, x=column, nbins=10, title=t["histogram_title"].format(title))
+    histogram_max = max(10, int(np.ceil(values.max())))
     expected_counts = fit_result.get("expected_counts") if fit_result is not None else None
+    if expected_counts is not None and len(expected_counts) > 0:
+        histogram_max = max(histogram_max, int(fit_result["bin_centers"][-1]))
+    fig = go.Figure(data=[go.Histogram(
+        x=values,
+        name=title,
+        xbins=dict(start=-0.5, end=histogram_max + 0.5, size=1),
+    )])
+    fig.update_layout(title=t["histogram_title"].format(title))
     if expected_counts is not None and len(expected_counts) > 0:
         fig.add_trace(go.Scatter(
             x=fit_result["bin_centers"],
@@ -1051,7 +1061,7 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
     fig.update_layout(
         xaxis_title=title,
         yaxis_title="Nombre",
-        xaxis=dict(range=[0, histogram_max]),
+        xaxis=dict(range=[-0.5, histogram_max + 0.5]),
         template="plotly_white",
     )
     return fig
@@ -1064,7 +1074,7 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
     if df.empty or column not in df.columns:
         return px.scatter(title=t.get("no_data", "No data yet"))
 
-    filtered_df = df[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
+    filtered_df = _filter_poisson_measurements(df)
     if filtered_df.empty:
         return px.scatter(title=t["no_60s"].format(title))
 
@@ -1081,16 +1091,20 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
     mean_value = float(values.mean())
     std_value = float(values.std(ddof=1)) if len(values) > 1 else 0.0
     uncertainty = std_value / np.sqrt(len(values)) if len(values) > 1 else 0.0
-    histogram_max = max(10, int(np.ceil(values.max())) + 1)
+    histogram_max = max(10, int(np.ceil(values.max())))
+    expected_counts = fit_result.get("expected_counts") if fit_result is not None else None
+    if expected_counts is not None and len(expected_counts) > 0:
+        histogram_max = max(histogram_max, int(fit_result["bin_centers"][-1]))
+    histogram_bins = dict(start=-0.5, end=histogram_max + 0.5, size=1)
 
     if len(filtered_df) == 1:
-        frames = [go.Frame(data=[go.Histogram(x=[filtered_df.iloc[0][column]], nbinsx=10)], name=str(filtered_df.iloc[0]["time"]))]
+        frames = [go.Frame(data=[go.Histogram(x=[filtered_df.iloc[0][column]], xbins=histogram_bins)], name=str(filtered_df.iloc[0]["time"]))]
     else:
         frames = []
         for index, row in filtered_df.iterrows():
             frame_values = filtered_df.loc[filtered_df["time"] <= row["time"], column].dropna().astype(float)
             frames.append(go.Frame(
-                data=[go.Histogram(x=frame_values, nbinsx=10)],
+                data=[go.Histogram(x=frame_values, xbins=histogram_bins)],
                 name=row["time"].strftime("%Y-%m-%d %H:%M:%S"),
             ))
 
@@ -1098,16 +1112,15 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
     max_bin_count = 0
     if histogram_values:
         for values in histogram_values:
-            counts, _ = np.histogram(values, bins=10, range=(0, histogram_max))
+            counts, _ = np.histogram(values, bins=np.arange(-0.5, histogram_max + 1.5, 1))
             max_bin_count = max(max_bin_count, int(counts.max()) if counts.size else 0)
     if max_bin_count == 0:
         max_bin_count = 1
 
     fig = go.Figure(
-        data=[go.Histogram(x=filtered_df.iloc[[0]][column].dropna().astype(float), nbinsx=10)],
+        data=[go.Histogram(x=filtered_df.iloc[[0]][column].dropna().astype(float), xbins=histogram_bins)],
         frames=frames,
     )
-    expected_counts = fit_result.get("expected_counts") if fit_result is not None else None
     if expected_counts is not None and len(expected_counts) > 0:
         fig.add_trace(go.Scatter(
             x=fit_result["bin_centers"],
@@ -1120,7 +1133,7 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
         title=t["histogram_over_time"].format(title),
         xaxis_title=title,
         yaxis_title="Count",
-        xaxis=dict(range=[0, histogram_max]),
+        xaxis=dict(range=[-0.5, histogram_max + 0.5]),
         yaxis=dict(range=[0, max_bin_count + 1]),
         template="plotly_white",
         updatemenus=[{
