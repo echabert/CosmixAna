@@ -650,9 +650,9 @@ def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lan
         dcc.Graph(figure=build_static_histogram_figure(df, "coincidences", titles[2], fit_result=fit_results[2] if fit_requested else None, lang=lang)),
     ]
     animated_histograms = [
-        dcc.Graph(figure=build_histogram_figure(df, "count_1", titles[0], lang=lang)),
-        dcc.Graph(figure=build_histogram_figure(df, "count_2", titles[1], lang=lang)),
-        dcc.Graph(figure=build_histogram_figure(df, "coincidences", titles[2], lang=lang)),
+        dcc.Graph(figure=build_histogram_figure(df, "count_1", titles[0], fit_result=fit_results[0] if fit_requested else None, lang=lang)),
+        dcc.Graph(figure=build_histogram_figure(df, "count_2", titles[1], fit_result=fit_results[1] if fit_requested else None, lang=lang)),
+        dcc.Graph(figure=build_histogram_figure(df, "coincidences", titles[2], fit_result=fit_results[2] if fit_requested else None, lang=lang)),
     ]
 
     fit_summary = []
@@ -1044,9 +1044,9 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
         fig.add_trace(go.Scatter(
             x=fit_result["bin_centers"],
             y=fit_result["expected_counts"],
-            mode="lines+markers",
+            mode="lines",
             name="Poisson fit",
-            line=dict(color="#d9534f"),
+            line=dict(color="#d9534f", width=2),
         ))
     fig.update_layout(
         xaxis_title=title,
@@ -1112,9 +1112,9 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
         fig.add_trace(go.Scatter(
             x=fit_result["bin_centers"],
             y=fit_result["expected_counts"],
-            mode="lines+markers",
+            mode="lines",
             name="Poisson fit",
-            line=dict(color="#d9534f"),
+            line=dict(color="#d9534f", width=2),
         ))
     fig.update_layout(
         title=t["histogram_over_time"].format(title),
