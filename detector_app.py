@@ -1,5 +1,6 @@
 import math
 import os
+import configparser
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
 from datetime import datetime
@@ -20,6 +21,8 @@ from dash import Dash, dcc, html, Input, Output, State, dash_table, no_update
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "detector_measurements.csv"
+ANGLE_PARAMETERS_FILE = BASE_DIR / "def_param.cfi"
+POISSON_ACQUISITION_DURATION = 60
 
 # Simple translations map for UI strings
 TRANSLATIONS = {
@@ -39,24 +42,32 @@ TRANSLATIONS = {
         "angle_label": "Angle (deg): ",
         "run_button": "Run measurement",
         "progress_label": "Measurement progress: {}%",
-        "latest_measurements": "Latest Measurements",
-        "poisson_h2": "Poisson law check",
+        "latest_measurements": "All Measurements",
+        "poisson_h2": "Poisson law check (60-second acquisitions)",
         "current_distributions": "Current distributions",
         "activate_fit": "Activate fit",
         "click_fit_hint": "Click the fit button to overlay a Poisson fit on each histogram.",
         "fitted_parameter": "Fitted parameter: μ = {}",
         "chi2_probability": "χ² probability: {}",
-        "angle_fit_title": "A·cos(θ)^n + B fit",
-        "angle_fit_function": "Model: f(θ) = A·cos(θ)^n + B",
+        "angle_fit_title": "A·cos(θ−π/2)^n + B fit",
+        "angle_fit_function": "Model: f(θ) = A·cos(θ−π/2)^n + B",
+        "angle_fit_uncertainty": "Fit uncertainty",
+        "angle_plot_title": "Mean coincidence rate per minute versus angle",
+        "angle_ylabel": "Coincidences per minute",
         "angle_fit_summary": "Fit result: A = {} ± {} | n = {} ± {} | B = {} ± {}",
         "animated_history": "Animated history",
-        "trend_h2": "Trend plots",
+        "trend_h2": "Trend plots (detector in vertical position)",
+        "rate_trend_title": "Cumulative mean count rate per minute (detector in vertical position)",
+        "run_number_label": "Measurement number",
+        "rate_ylabel": "Counts per minute",
         "angle_h2": "Angle dependence",
+        "angle_tendency_curve": "Tendency curve",
         "no_data": "No data yet",
-        "no_10s": "No 10-second runs for {}",
+        "no_angle_data": "No measurements at 90°",
+        "no_60s": "No 60-second runs for {}",
         "no_timestamps": "No valid timestamps for {}",
-        "histogram_title": "Histogram of {}",
-        "histogram_over_time": "Histogram of {} over time",
+        "histogram_title": "Histogram of {} (60-second runs)",
+        "histogram_over_time": "Histogram of {} over time (60-second runs)",
         "count_label": "Count",
         "mean_annotation": "Mean = {} ± {}",
         "play_label": "Play",
@@ -86,24 +97,32 @@ TRANSLATIONS = {
         "angle_label": "Angle (°) : ",
         "run_button": "Exécuter la mesure",
         "progress_label": "Progression de la mesure : {}%",
-        "latest_measurements": "Dernières mesures",
-        "poisson_h2": "Vérification de la loi de Poisson",
+        "latest_measurements": "Toutes les mesures",
+        "poisson_h2": "Vérification de la loi de Poisson (prises de 60 secondes)",
         "current_distributions": "Distributions actuelles",
         "activate_fit": "Activer l'ajustement",
         "click_fit_hint": "Cliquez sur le bouton d'ajustement pour superposer un ajustement de Poisson sur chaque histogramme.",
         "fitted_parameter": "Paramètre ajusté : μ = {}",
         "chi2_probability": "Probabilité χ² : {}",
-        "angle_fit_title": "A·cos(θ)^n + B ajustement",
-        "angle_fit_function": "Modèle : f(θ) = A·cos(θ)^n + B",
+        "angle_fit_title": "A·cos(θ−π/2)^n + B ajustement",
+        "angle_fit_function": "Modèle : f(θ) = A·cos(θ−π/2)^n + B",
+        "angle_fit_uncertainty": "Incertitude de l'ajustement",
+        "angle_plot_title": "Taux moyen de coïncidences par minute en fonction de l'angle",
+        "angle_ylabel": "Coïncidences par minute",
         "angle_fit_summary": "Résultat de l'ajustement : A = {} ± {} | n = {} ± {} | B = {} ± {}",
         "animated_history": "Historique animé",
-        "trend_h2": "Graphiques d'évolution en fonction du temps",
+        "trend_h2": "Graphiques d'évolution en fonction du temps (détecteur en position verticale)",
+        "rate_trend_title": "Moyenne cumulée des décomptes par minute (détecteur en position verticale)",
+        "run_number_label": "Numéro de la prise",
+        "rate_ylabel": "Décomptes par minute",
         "angle_h2": "Dépendance angulaire",
+        "angle_tendency_curve": "Courbe de tendance",
         "no_data": "Pas encore de données",
-        "no_10s": "Aucune prise de 10 secondes pour {}",
+        "no_angle_data": "Aucune mesure à 90°",
+        "no_60s": "Aucune prise de 60 secondes pour {}",
         "no_timestamps": "Aucun horodatage valide pour {}",
-        "histogram_title": "Histogramme de {}",
-        "histogram_over_time": "Histogramme de {} au fil du temps",
+        "histogram_title": "Histogramme de {} (prises de 60 secondes)",
+        "histogram_over_time": "Histogramme de {} au fil du temps (prises de 60 secondes)",
         "count_label": "Nombre",
         "mean_annotation": "Moyenne = {} ± {}",
         "play_label": "Lire",
@@ -213,52 +232,88 @@ def build_poisson_summary(csv_path: Union[Path, str] = DATA_FILE) -> Dict[str, A
     }
 
 
-def build_trend_plot(csv_path: Union[Path, str] = DATA_FILE, lang: str = "fr"):
-    t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
+def _load_trend_measurements(csv_path: Union[Path, str]) -> pd.DataFrame:
     df = load_measurements(csv_path)
     if df.empty:
-        return px.scatter(title=t.get("no_data", "Pas encore de données"))
+        return df
+    return df.loc[df["angle"] == 90].copy()
+
+
+def _poisson_rate_uncertainties(counts: pd.Series, durations: pd.Series) -> np.ndarray:
+    return 60 * np.sqrt(counts.astype(float)) / durations.astype(float)
+
+
+def build_trend_plot(csv_path: Union[Path, str] = DATA_FILE, lang: str = "fr"):
+    t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
+    df = _load_trend_measurements(csv_path)
+    if df.empty:
+        return px.scatter(title=t.get("no_angle_data", "No measurements at 90°"))
     df = df.copy()
     df["index"] = np.arange(1, len(df) + 1)
-    fig = px.line(
-        df,
-        x="index",
-        y=["count_1", "count_2", "coincidences"],
+    for column in ["count_1", "count_2", "coincidences"]:
+        df[f"{column}_per_minute"] = df[column] / df["duration"] * 60
+
+    rate_columns = [
+        ("count_1_per_minute", "count_1"),
+        ("count_2_per_minute", "count_2"),
+        ("coincidences_per_minute", "coincidences"),
+    ]
+    series_names = {
+        "count_1_per_minute": f"{t.get('count1_title', 'Count 1')}/min",
+        "count_2_per_minute": f"{t.get('count2_title', 'Count 2')}/min",
+        "coincidences_per_minute": f"{t.get('coincidences_title', 'Coincidences')}/min",
+    }
+    fig = go.Figure()
+    for column, count_column in rate_columns:
+        fig.add_trace(go.Scatter(
+            x=df["index"],
+            y=df[column],
+            mode="lines+markers",
+            name=series_names[column],
+            error_y=dict(
+                type="data",
+                array=_poisson_rate_uncertainties(df[count_column], df["duration"]),
+                visible=True,
+            ),
+        ))
+    fig.update_layout(
         title=t.get("trend_h2", "Évolutions des décomptes dans le temps"),
-        markers=True,
+        xaxis_title=t.get("run_number_label", "Measurement number"),
+        yaxis_title=t.get("rate_ylabel", "Counts per minute"),
+        template="plotly_white",
     )
-    fig.update_layout(template="plotly_white")
     return fig
 
 
 def build_rate_trend_plot(csv_path: Union[Path, str] = DATA_FILE, lang: str = "fr"):
-    df = load_measurements(csv_path)
+    df = _load_trend_measurements(csv_path)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     if df.empty:
-        return px.scatter(title=t.get("no_data", "Pas encore de données"))
+        return px.scatter(title=t.get("no_angle_data", "No measurements at 90°"))
 
     df = df.copy()
     df["index"] = np.arange(1, len(df) + 1)
-    df["count_1_rate"] = df["count_1"] / df["duration"]
-    df["count_2_rate"] = df["count_2"] / df["duration"]
-    df["coincidences_rate"] = df["coincidences"] / df["duration"]
+    df["count_1_rate"] = df["count_1"] / df["duration"] * 60
+    df["count_2_rate"] = df["count_2"] / df["duration"] * 60
+    df["coincidences_rate"] = df["coincidences"] / df["duration"] * 60
 
     fig = go.Figure()
-    for column, name in [("count_1_rate", f"{t.get('count1_title')}/s"), ("count_2_rate", f"{t.get('count2_title')}/s"), ("coincidences_rate", "Coïncidences/s")]:
+    for column, count_column, name in [
+        ("count_1_rate", "count_1", f"{t.get('count1_title')}/min"),
+        ("count_2_rate", "count_2", f"{t.get('count2_title')}/min"),
+        ("coincidences_rate", "coincidences", f"{t.get('coincidences_title')}/min"),
+    ]:
         values = df[column].astype(float)
+        measurement_uncertainties = _poisson_rate_uncertainties(df[count_column], df["duration"])
         running_means = []
         running_uncertainties = []
-        for i in range(len(values)):
-            subset = values.iloc[: i + 1]
-            if len(subset) == 1:
-                running_means.append(float(subset.iloc[0]))
-                running_uncertainties.append(0.0)
-            else:
-                mean_value = float(subset.mean())
-                std_value = float(subset.std(ddof=1)) if len(subset) > 1 else 0.0
-                uncertainty = std_value / np.sqrt(len(subset)) if len(subset) > 1 else 0.0
-                running_means.append(mean_value)
-                running_uncertainties.append(uncertainty)
+        for index in range(len(values)):
+            subset = values.iloc[: index + 1]
+            subset_uncertainties = measurement_uncertainties[: index + 1]
+            running_means.append(float(subset.mean()))
+            running_uncertainties.append(
+                float(np.sqrt(np.square(subset_uncertainties).sum()) / len(subset))
+            )
 
         fig.add_trace(go.Scatter(
             x=df["index"],
@@ -269,9 +324,9 @@ def build_rate_trend_plot(csv_path: Union[Path, str] = DATA_FILE, lang: str = "f
         ))
 
     fig.update_layout(
-        title=t.get("rate_trend_title", "Moyenne cumulée des décomptes par seconde"),
+        title=t.get("rate_trend_title", "Moyenne cumulée des décomptes par minute"),
         xaxis_title=t.get("run_number_label", "Numéro de la prise"),
-        yaxis_title=t.get("rate_ylabel", "Décomptes/s"),
+        yaxis_title=t.get("rate_ylabel", "Décomptes par minute"),
         template="plotly_white",
     )
     return fig
@@ -281,11 +336,11 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
     if not isinstance(df, pd.DataFrame):
         df = load_measurements(df)
     if df.empty:
-        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "angle": np.array([]), "fit_rate": np.array([])}
+        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "AB_cov": 0.0, "angle": np.array([]), "fit_rate": np.array([])}
 
     df = df.copy()
-    df["coincidences_per_sec"] = df["coincidences"] / df["duration"]
-    grouped = df.groupby("angle")["coincidences_per_sec"]
+    df["coincidences_per_minute"] = df["coincidences"] / df["duration"] * 60
+    grouped = df.groupby("angle")["coincidences_per_minute"]
     angle_groups = pd.DataFrame({
         "angle": list(grouped.groups.keys()),
         "mean_rate": [float(values.mean()) for _, values in grouped],
@@ -294,9 +349,9 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
     angles = angle_groups["angle"].to_numpy(dtype=float)
     rates = angle_groups["mean_rate"].to_numpy(dtype=float)
     if len(angles) == 0:
-        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "angle": angles, "fit_rate": np.array([])}
+        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "AB_cov": 0.0, "angle": angles, "fit_rate": np.array([])}
 
-    cos_theta = np.cos(np.deg2rad(angles))
+    cos_theta = np.cos(np.deg2rad(angles) - np.pi/2)
 
     def fit_for_n(n_value: float) -> Optional[Dict[str, Any]]:
         x = np.sign(cos_theta) * np.power(np.abs(cos_theta), n_value)
@@ -319,7 +374,7 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
             best_fit = result
 
     if best_fit is None:
-        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "angle": angles, "fit_rate": np.array([])}
+        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "AB_cov": 0.0, "angle": angles, "fit_rate": np.array([])}
 
     design = np.vstack([best_fit["x"], np.ones_like(best_fit["x"]) ]).T
     dof = len(rates) - 2
@@ -354,21 +409,52 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
         "A_unc": A_unc,
         "n_unc": n_unc,
         "B_unc": B_unc,
+        "AB_cov": float(cov[0, 1]),
         "angle": angles,
         "fit_rate": fit_rate,
+    }
+
+
+def load_angle_curve_parameters() -> Dict[str, float]:
+    parser = configparser.ConfigParser()
+    parser.read(ANGLE_PARAMETERS_FILE)
+    return {
+        "A": parser.getfloat("angle_curve", "A", fallback=0.5),
+        "n": parser.getfloat("angle_curve", "n", fallback=2.0),
+        "B": parser.getfloat("angle_curve", "B", fallback=0.0),
     }
 
 
 def build_angle_plot(csv_path: Union[Path, str] = DATA_FILE, fit_result: Optional[Dict[str, Any]] = None, lang: str = "fr"):
     df = load_measurements(csv_path)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
+    fig = go.Figure()
+    curve_angles = np.linspace(0.0, 180.0, 361)
+    curve_parameters = load_angle_curve_parameters()
+    curve_rates = 60 * (
+        curve_parameters["A"] * np.cos(np.deg2rad(curve_angles) - np.pi / 2) ** curve_parameters["n"]
+        + curve_parameters["B"]
+    )
+    fig.add_trace(go.Scatter(
+        x=curve_angles,
+        y=curve_rates,
+        mode="lines",
+        name=t.get("angle_tendency_curve", "Tendency curve"),
+        line=dict(color="#c7c7c7", width=2),
+    ))
     if df.empty:
-        return px.scatter(title=t.get("no_data", "Pas encore de données"))
+        fig.update_layout(
+            title=t.get("no_data", "Pas encore de données"),
+            xaxis_title=t.get("angle_label", "Angle (°)"),
+            yaxis_title=t.get("angle_ylabel", "Coïncidences par minute"),
+            template="plotly_white",
+        )
+        return fig
 
     df = df.copy()
-    df["coincidences_per_sec"] = df["coincidences"] / df["duration"]
+    df["coincidences_per_minute"] = df["coincidences"] / df["duration"] * 60
 
-    grouped = df.groupby("angle")["coincidences_per_sec"]
+    grouped = df.groupby("angle")["coincidences_per_minute"]
     angle_groups = pd.DataFrame({
         "angle": list(grouped.groups.keys()),
         "mean_rate": [float(values.mean()) for _, values in grouped],
@@ -382,26 +468,59 @@ def build_angle_plot(csv_path: Union[Path, str] = DATA_FILE, fit_result: Optiona
     )
     angle_summary = angle_groups.sort_values("angle")
 
-    fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=angle_summary["angle"],
         y=angle_summary["mean_rate"],
         mode="lines+markers",
-        name=f"{t.get('coincidences_title','Coïncidences')}/s",
+        name=f"{t.get('coincidences_title','Coïncidences')}/min",
         error_y=dict(type="data", array=angle_summary["uncertainty"], visible=True),
     ))
     if fit_result is not None and len(fit_result.get("angle", [])) > 0:
+        fit_cosine = np.cos(np.deg2rad(curve_angles) - np.pi / 2)
+        abs_fit_cosine = np.abs(fit_cosine)
+        fit_basis = np.sign(fit_cosine) * np.power(abs_fit_cosine, fit_result["n"])
+        basis_n_derivative = np.zeros_like(fit_basis)
+        nonzero_cosine = abs_fit_cosine > 0
+        basis_n_derivative[nonzero_cosine] = (
+            fit_basis[nonzero_cosine] * np.log(abs_fit_cosine[nonzero_cosine])
+        )
+        fit_rate = fit_result["A"] * fit_basis + fit_result["B"]
+        fit_variance = (
+            np.square(fit_basis * fit_result["A_unc"])
+            + fit_result.get("B_unc", 0.0) ** 2
+            + 2 * fit_basis * fit_result.get("AB_cov", 0.0)
+            + np.square(fit_result["A"] * basis_n_derivative * fit_result["n_unc"])
+        )
+        fit_uncertainty = np.sqrt(np.maximum(fit_variance, 0.0))
         fig.add_trace(go.Scatter(
-            x=fit_result["angle"],
-            y=fit_result["fit_rate"],
+            x=curve_angles,
+            y=fit_rate + fit_uncertainty,
+            mode="lines",
+            line=dict(color="rgba(217,83,79,0)"),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=curve_angles,
+            y=fit_rate - fit_uncertainty,
+            mode="lines",
+            line=dict(color="rgba(217,83,79,0)"),
+            fill="tonexty",
+            fillcolor="rgba(217,83,79,0.18)",
+            name=t.get("angle_fit_uncertainty", "Fit uncertainty"),
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=curve_angles,
+            y=fit_rate,
             mode="lines",
             name=t.get("angle_fit_title", "A·cos(θ)^n fit"),
             line=dict(color="#d9534f"),
         ))
     fig.update_layout(
-        title=t.get("angle_plot_title", "Moyenne du taux de coïncidences/s en fonction de l'angle"),
+        title=t.get("angle_plot_title", "Taux moyen de coïncidences par minute en fonction de l'angle"),
         xaxis_title=t.get("angle_label", "Angle (°)"),
-        yaxis_title=t.get("angle_ylabel", "Taux de coïncidences/s"),
+        yaxis_title=t.get("angle_ylabel", "Coïncidences par minute"),
         template="plotly_white",
     )
     return fig
@@ -418,17 +537,34 @@ def build_measurement_controls(visible: bool = True, lang: str = "fr"):
             ),
             html.Div(
                 style={"display": "flex", "flexDirection": "column", "minWidth": "120px"},
-                children=[html.Label(t["duration_label"]), dcc.Input(id="duration", type="number", value=10, min=1, step=1, style={"width": "80px"})],
+                children=[html.Label(t["duration_label"]), dcc.Input(id="duration", type="number", value=60, min=1, step=1, style={"width": "80px"})],
             ),
             html.Div(
                 style={"display": "flex", "flexDirection": "column", "minWidth": "120px"},
                 children=[html.Label(t["angle_label"]), dcc.Dropdown(
                     id="angle",
-                    options=[{"label": str(v), "value": v} for v in [0, 10, 20, 30, 40]],
-                    value=0,
+                    options=[{"label": str(v), "value": v} for v in [10*i for i in range(19)]],
+                    value=90,
                     clearable=False,
                     style={"width": "100%"},
                 )],
+            ),
+            html.Button(
+                t["run_button"],
+                id="run-button",
+                n_clicks=0,
+                type="button",
+                style={
+                    "display": "block",
+                    "padding": "10px 18px",
+                    "border": "0",
+                    "borderRadius": "4px",
+                    "backgroundColor": "#2b6cb0",
+                    "color": "white",
+                    "fontWeight": "bold",
+                    "cursor": "pointer",
+                    "marginBottom": "16px",
+                },
             ),
         ],
     )
@@ -465,23 +601,6 @@ def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str 
                 ],
             ),
             build_measurement_controls(visible=True, lang=lang),
-            html.Button(
-                t["run_button"],
-                id="run-button",
-                n_clicks=0,
-                type="button",
-                style={
-                    "display": "block",
-                    "padding": "10px 18px",
-                    "border": "0",
-                    "borderRadius": "4px",
-                    "backgroundColor": "#2b6cb0",
-                    "color": "white",
-                    "fontWeight": "bold",
-                    "cursor": "pointer",
-                    "marginBottom": "16px",
-                },
-            ),
             html.Div(
                 id="measurement-progress-container",
                 style={"maxHeight": "0", "opacity": 0, "overflow": "hidden", "margin": "0 24px", "transition": "max-height 150ms ease, opacity 150ms ease"},
@@ -500,7 +619,7 @@ def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str 
             dcc.Loading(children=[
                 dash_table.DataTable(
                     id="measurements-table",
-                    data=df.tail(10).iloc[::-1].to_dict("records"),
+                    data=df.iloc[::-1].to_dict("records"),
                     columns=[{"name": col, "id": col} for col in df.columns],
                     page_size=10,
                     style_table={"overflowX": "auto"},
@@ -515,6 +634,7 @@ def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str 
 def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lang: str = "fr"):
     if df is None:
         df = load_measurements(DATA_FILE)
+    df = df.loc[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     summary = build_comparison_summary(df)
 
@@ -525,14 +645,14 @@ def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lan
             fit_results.append(build_poisson_fit_result(df, column, title))
 
     static_histograms = [
-        dcc.Graph(figure=build_static_histogram_figure(df, "count_1", titles[0], fit_result=fit_results[0] if fit_requested else None)),
-        dcc.Graph(figure=build_static_histogram_figure(df, "count_2", titles[1], fit_result=fit_results[1] if fit_requested else None)),
-        dcc.Graph(figure=build_static_histogram_figure(df, "coincidences", titles[2], fit_result=fit_results[2] if fit_requested else None)),
+        dcc.Graph(figure=build_static_histogram_figure(df, "count_1", titles[0], fit_result=fit_results[0] if fit_requested else None, lang=lang)),
+        dcc.Graph(figure=build_static_histogram_figure(df, "count_2", titles[1], fit_result=fit_results[1] if fit_requested else None, lang=lang)),
+        dcc.Graph(figure=build_static_histogram_figure(df, "coincidences", titles[2], fit_result=fit_results[2] if fit_requested else None, lang=lang)),
     ]
     animated_histograms = [
-        dcc.Graph(figure=build_histogram_figure(df, "count_1", titles[0])),
-        dcc.Graph(figure=build_histogram_figure(df, "count_2", titles[1])),
-        dcc.Graph(figure=build_histogram_figure(df, "coincidences", titles[2])),
+        dcc.Graph(figure=build_histogram_figure(df, "count_1", titles[0], lang=lang)),
+        dcc.Graph(figure=build_histogram_figure(df, "count_2", titles[1], lang=lang)),
+        dcc.Graph(figure=build_histogram_figure(df, "coincidences", titles[2], lang=lang)),
     ]
 
     fit_summary = []
@@ -764,7 +884,7 @@ def create_app() -> Dash:
             #print(res)
             row = append_measurement(
                 DATA_FILE,
-                duration=float(duration or 10.0),
+                duration=float(duration or 60.0),
                 angle=float(angle or 0.0),
                 #fill with fake data
                 #count_1=count_1,
@@ -847,7 +967,7 @@ def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, ti
     if df.empty or column not in df.columns:
         return {"title": title, "mu": 0.0, "chi2_probability": 1.0, "expected_counts": [], "bin_centers": []}
 
-    filtered_df = df[df["duration"] == 10].copy()
+    filtered_df = df[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
     if filtered_df.empty:
         return {"title": title, "mu": 0.0, "chi2_probability": 1.0, "expected_counts": [], "bin_centers": []}
 
@@ -859,8 +979,9 @@ def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, ti
         return {"title": title, "mu": 0.0, "chi2_probability": 1.0, "expected_counts": [], "bin_centers": []}
 
     mu = float(values.mean())
-    edges = np.linspace(0, 10, 11)
-    counts, _ = np.histogram(values, bins=10, range=(0, 10))
+    histogram_max = max(10, int(np.ceil(values.max())) + 1)
+    edges = np.linspace(0, histogram_max, 11)
+    counts, _ = np.histogram(values, bins=10, range=(0, histogram_max))
     expected_counts = []
     for index in range(len(edges) - 1):
         lower = edges[index]
@@ -895,15 +1016,16 @@ def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, ti
     }
 
 
-def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, title: str, fit_result: Optional[Dict[str, Any]] = None):
+def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, title: str, fit_result: Optional[Dict[str, Any]] = None, lang: str = "fr"):
     if not isinstance(df, pd.DataFrame):
         df = load_measurements(df)
+    t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     if df.empty or column not in df.columns:
-        return px.scatter(title="No data yet")
+        return px.scatter(title=t.get("no_data", "No data yet"))
 
-    filtered_df = df[df["duration"] == 10].copy()
+    filtered_df = df[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
     if filtered_df.empty:
-        return px.scatter(title=f"Aucune prise de 10 secondes pour {title}")
+        return px.scatter(title=t["no_60s"].format(title))
 
     filtered_df = filtered_df.copy()
     filtered_df["time"] = pd.to_datetime(filtered_df["time"], errors="coerce")
@@ -913,9 +1035,10 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
 
     values = filtered_df[column].dropna().astype(float)
     if values.empty:
-        return px.scatter(title=f"Aucune prise de 10 secondes pour {title}")
+        return px.scatter(title=t["no_60s"].format(title))
 
-    fig = px.histogram(filtered_df, x=column, nbins=10, title=f"Histogramme de {title}")
+    histogram_max = max(10, int(np.ceil(values.max())) + 1)
+    fig = px.histogram(filtered_df, x=column, nbins=10, title=t["histogram_title"].format(title))
     expected_counts = fit_result.get("expected_counts") if fit_result is not None else None
     if expected_counts is not None and len(expected_counts) > 0:
         fig.add_trace(go.Scatter(
@@ -928,21 +1051,22 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
     fig.update_layout(
         xaxis_title=title,
         yaxis_title="Nombre",
-        xaxis=dict(range=[0, 10]),
+        xaxis=dict(range=[0, histogram_max]),
         template="plotly_white",
     )
     return fig
 
 
-def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, title: str, fit_result: Optional[Dict[str, Any]] = None):
+def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, title: str, fit_result: Optional[Dict[str, Any]] = None, lang: str = "fr"):
     if not isinstance(df, pd.DataFrame):
         df = load_measurements(df)
+    t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     if df.empty or column not in df.columns:
-        return px.scatter(title="No data yet")
+        return px.scatter(title=t.get("no_data", "No data yet"))
 
-    filtered_df = df[df["duration"] == 10].copy()
+    filtered_df = df[df["duration"] == POISSON_ACQUISITION_DURATION].copy()
     if filtered_df.empty:
-        return px.scatter(title=f"No 10-second runs for {title}")
+        return px.scatter(title=t["no_60s"].format(title))
 
     filtered_df = filtered_df.copy()
     filtered_df["time"] = pd.to_datetime(filtered_df["time"], errors="coerce")
@@ -952,11 +1076,12 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
 
     values = filtered_df[column].dropna().astype(float)
     if values.empty:
-        return px.scatter(title=f"No 10-second runs for {title}")
+        return px.scatter(title=t["no_60s"].format(title))
 
     mean_value = float(values.mean())
     std_value = float(values.std(ddof=1)) if len(values) > 1 else 0.0
     uncertainty = std_value / np.sqrt(len(values)) if len(values) > 1 else 0.0
+    histogram_max = max(10, int(np.ceil(values.max())) + 1)
 
     if len(filtered_df) == 1:
         frames = [go.Frame(data=[go.Histogram(x=[filtered_df.iloc[0][column]], nbinsx=10)], name=str(filtered_df.iloc[0]["time"]))]
@@ -973,7 +1098,7 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
     max_bin_count = 0
     if histogram_values:
         for values in histogram_values:
-            counts, _ = np.histogram(values, bins=10, range=(0, 10))
+            counts, _ = np.histogram(values, bins=10, range=(0, histogram_max))
             max_bin_count = max(max_bin_count, int(counts.max()) if counts.size else 0)
     if max_bin_count == 0:
         max_bin_count = 1
@@ -992,10 +1117,10 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
             line=dict(color="#d9534f"),
         ))
     fig.update_layout(
-        title=f"{title} vs temps",
+        title=t["histogram_over_time"].format(title),
         xaxis_title=title,
         yaxis_title="Count",
-        xaxis=dict(range=[0, 10]),
+        xaxis=dict(range=[0, histogram_max]),
         yaxis=dict(range=[0, max_bin_count + 1]),
         template="plotly_white",
         updatemenus=[{
