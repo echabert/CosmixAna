@@ -39,7 +39,7 @@ pip install -r requirements.txt
 If there is no `requirements.txt`, install the main dependencies manually:
 
 ```bash
-pip install dash pandas plotly numpy scipy
+pip install dash pandas plotly numpy scipy pyserial
 ```
 
 ## Run the app
@@ -66,6 +66,10 @@ Then open the local Dash URL  http://127.0.0.1:8050/ in a web browser.
 ## Notes
 
 - Data is stored in `detector_measurements.csv` in the project root.
+- The detector serial port is configured in `config.ini` under `[detector] serial_port`.
+   /dev/tty.SLAB_USBtoUART for JLA laptop
+   /dev/tty.usbserial-0001 for EC laptop  
+- `pyserial` provides the serial communication used for detector measurements.
 - The angle fit model is explicitly shown as `f(θ) = A·cos(θ)^n + B` in the UI when the fit is activated.
 - The app supports English and French via the language selector.
 - dectector_measurement.csv needs to be reset

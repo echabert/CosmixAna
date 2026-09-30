@@ -8,13 +8,14 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from DataTaking import countD
 
 try:
     from scipy.stats import chi2 as chi2_dist
 except ImportError:  # pragma: no cover - optional dependency fallback
     chi2_dist = None
 
-from dash import Dash, dcc, html, Input, Output, State, dash_table
+from dash import Dash, dcc, html, Input, Output, State, dash_table, no_update
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -37,6 +38,7 @@ TRANSLATIONS = {
         "person_placeholder": "Enter your name",
         "angle_label": "Angle (deg): ",
         "run_button": "Run measurement",
+        "progress_label": "Measurement progress: {}%",
         "latest_measurements": "Latest Measurements",
         "poisson_h2": "Poisson law check",
         "current_distributions": "Current distributions",
@@ -83,6 +85,7 @@ TRANSLATIONS = {
         "person_placeholder": "Entrez votre nom",
         "angle_label": "Angle (°) : ",
         "run_button": "Exécuter la mesure",
+        "progress_label": "Progression de la mesure : {}%",
         "latest_measurements": "Dernières mesures",
         "poisson_h2": "Vérification de la loi de Poisson",
         "current_distributions": "Distributions actuelles",
@@ -427,9 +430,9 @@ def build_measurement_controls(visible: bool = True, lang: str = "fr"):
                     style={"width": "100%"},
                 )],
             ),
-            html.Button(t["run_button"], id="run-button", n_clicks=0, style={"height": "40px"}),
         ],
     )
+
 
 
 def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str = "fr"):
@@ -462,11 +465,42 @@ def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str 
                 ],
             ),
             build_measurement_controls(visible=True, lang=lang),
+            html.Button(
+                t["run_button"],
+                id="run-button",
+                n_clicks=0,
+                type="button",
+                style={
+                    "display": "block",
+                    "padding": "10px 18px",
+                    "border": "0",
+                    "borderRadius": "4px",
+                    "backgroundColor": "#2b6cb0",
+                    "color": "white",
+                    "fontWeight": "bold",
+                    "cursor": "pointer",
+                    "marginBottom": "16px",
+                },
+            ),
+            html.Div(
+                id="measurement-progress-container",
+                style={"maxHeight": "0", "opacity": 0, "overflow": "hidden", "margin": "0 24px", "transition": "max-height 150ms ease, opacity 150ms ease"},
+                children=[
+                    html.Div(id="measurement-progress-label"),
+                    html.Div(
+                        style={"height": "10px", "backgroundColor": "#e2e8f0", "borderRadius": "5px", "overflow": "hidden"},
+                        children=html.Div(
+                            id="measurement-progress-bar",
+                            style={"height": "100%", "width": "0%", "backgroundColor": "#2b6cb0", "transition": "width 100ms linear"},
+                        ),
+                    ),
+                ],
+            ),
             html.H3(t["latest_measurements"]),
             dcc.Loading(children=[
                 dash_table.DataTable(
                     id="measurements-table",
-                    data=df.tail(10).to_dict("records"),
+                    data=df.tail(10).iloc[::-1].to_dict("records"),
                     columns=[{"name": col, "id": col} for col in df.columns],
                     page_size=10,
                     style_table={"overflowX": "auto"},
@@ -702,33 +736,44 @@ def create_app() -> Dash:
                 ],
             ),
             html.Div(id="page-content", children=build_home_page(lang="fr")),
+            dcc.Store(id="measurement-complete", data=0),
         ],
     )
 
     @app.callback(
         Output("page-content", "children"),
+        Output("measurement-complete", "data"),
         [Input("url", "pathname"), Input("url", "search"), Input("run-button", "n_clicks"), Input("lang-select", "value")],
         [State("person", "value"), State("duration", "value"), State("angle", "value")],
     )
     def update_dashboard(pathname, search, n_clicks, lang, person, duration, angle):
         t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
         if pathname == "/poisson" and "fit=1" in (search or ""):
-            return build_poisson_page(fit_requested=True, lang=lang)
+            return build_poisson_page(fit_requested=True, lang=lang), no_update
         if pathname == "/angle" and "fit=1" in (search or ""):
-            return build_angle_page(fit_requested=True, lang=lang)
+            return build_angle_page(fit_requested=True, lang=lang), no_update
 
         if n_clicks is not None and n_clicks >= 1:
-            factor = float(np.cos(np.deg2rad(float(angle or 0.0)))) ** 2
-            count_1 = int(np.random.poisson(max(1.0, 10 + 5 * factor)))
-            count_2 = int(np.random.poisson(max(1.0, 8 + 4 * factor)))
-            coincidences = int(np.random.poisson(max(0.0, 2 + 10 * factor)))
+            # code generated fake data - disactivated
+            #factor = float(np.cos(np.deg2rad(float(angle or 0.0)))) ** 2
+            #count_1 = int(np.random.poisson(max(1.0, 10 + 5 * factor)))
+            #count_2 = int(np.random.poisson(max(1.0, 8 + 4 * factor)))
+            #coincidences = int(np.random.poisson(max(0.0, 2 + 10 * factor)))
+            # code calling the function to take data
+            res = countD(duration,'0')
+            #print(res)
             row = append_measurement(
                 DATA_FILE,
                 duration=float(duration or 10.0),
                 angle=float(angle or 0.0),
-                count_1=count_1,
-                count_2=count_2,
-                coincidences=coincidences,
+                #fill with fake data
+                #count_1=count_1,
+                #count_2=count_2,
+                #coincidences=coincidences,
+                #fill with real data
+                count_1 = res['C1'],
+                count_2 = res['C2'],
+                coincidences = res['COINC'],
                 person=str(person or ""),
             )
             df = load_measurements(DATA_FILE)
@@ -737,15 +782,15 @@ def create_app() -> Dash:
                 status_text=status,
                 df=df,
                 lang=lang,
-            )
+            ), n_clicks
 
         if pathname == "/poisson":
-            return build_poisson_page(fit_requested=False, lang=lang)
+            return build_poisson_page(fit_requested=False, lang=lang), no_update
         if pathname == "/trends":
-            return build_trend_page(lang=lang)
+            return build_trend_page(lang=lang), no_update
         if pathname == "/angle":
-            return build_angle_page(fit_requested=False, lang=lang)
-        return build_home_page(lang=lang)
+            return build_angle_page(fit_requested=False, lang=lang), no_update
+        return build_home_page(lang=lang), no_update
 
     return app
 
