@@ -1,4 +1,6 @@
 (function () {
+    let progressFrame;
+
     function startProgress() {
         const container = document.getElementById("measurement-progress-container");
         const bar = document.getElementById("measurement-progress-bar");
@@ -6,17 +8,31 @@
         const durationInput = document.getElementById("duration");
         if (!container || !bar || !label) return;
 
-        const duration = Math.max(1, Number(durationInput && durationInput.value) || 10);
+        const duration = Math.max(1, Number(durationInput && durationInput.value) || 60);
         const isEnglish = document.documentElement.lang === "en";
-        label.textContent = isEnglish ? "Measurement progress: 0%" : "Progression de la mesure : 0%";
+        const progressText = isEnglish ? "Measurement progress" : "Progression de la mesure";
+        if (progressFrame !== undefined) {
+            window.cancelAnimationFrame(progressFrame);
+        }
+        label.textContent = progressText + ": 0%";
         container.style.maxHeight = "100px";
         container.style.opacity = "1";
         container.style.margin = "16px 24px";
         bar.style.transition = "none";
         bar.style.width = "0%";
+        const startTime = performance.now();
+
+        function updateProgress(timestamp) {
+            const progress = Math.min(100, Math.floor(((timestamp - startTime) / (duration * 1000)) * 100));
+            label.textContent = progressText + ": " + progress + "%";
+            bar.style.width = progress + "%";
+            if (progress < 100) {
+                progressFrame = window.requestAnimationFrame(updateProgress);
+            }
+        }
+
         window.requestAnimationFrame(function () {
-            bar.style.transition = "width " + duration + "s linear";
-            bar.style.width = "100%";
+            progressFrame = window.requestAnimationFrame(updateProgress);
         });
     }
 
