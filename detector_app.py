@@ -50,12 +50,12 @@ TRANSLATIONS = {
         "click_fit_hint": "Click the fit button to overlay a Poisson fit on each histogram.",
         "fitted_parameter": "Fitted parameter: μ = {}",
         "chi2_probability": "χ² probability: {}",
-        "angle_fit_title": "A·cos(θ−π/2)^n + B fit",
-        "angle_fit_function": "Model: f(θ) = A·cos(θ−π/2)^n + B",
+        "angle_fit_title": "A·cos(θ−π/2)^n fit",
+        "angle_fit_function": "Model: f(θ) = A·cos(θ−π/2)^n",
         "angle_fit_uncertainty": "Fit uncertainty",
         "angle_plot_title": "Mean coincidence rate per minute versus angle",
         "angle_ylabel": "Coincidences per minute",
-        "angle_fit_summary": "Fit result: A = {} ± {} | n = {} ± {} | B = {} ± {}",
+        "angle_fit_summary": "Fit result: A = {} ± {} | n = {} ± {}",
         "animated_history": "Animated history",
         "trend_h2": "Trend plots (detector in vertical position)",
         "rate_trend_title": "Cumulative mean count rate per minute (detector in vertical position)",
@@ -105,12 +105,12 @@ TRANSLATIONS = {
         "click_fit_hint": "Cliquez sur le bouton d'ajustement pour superposer un ajustement de Poisson sur chaque histogramme.",
         "fitted_parameter": "Paramètre ajusté : μ = {}",
         "chi2_probability": "Probabilité χ² : {}",
-        "angle_fit_title": "A·cos(θ−π/2)^n + B ajustement",
-        "angle_fit_function": "Modèle : f(θ) = A·cos(θ−π/2)^n + B",
+        "angle_fit_title": "A·cos(θ−π/2)^n ajustement",
+        "angle_fit_function": "Modèle : f(θ) = A·cos(θ−π/2)^n",
         "angle_fit_uncertainty": "Incertitude de l'ajustement",
         "angle_plot_title": "Taux moyen de coïncidences par minute en fonction de l'angle",
         "angle_ylabel": "Coïncidences par minute",
-        "angle_fit_summary": "Résultat de l'ajustement : A = {} ± {} | n = {} ± {} | B = {} ± {}",
+        "angle_fit_summary": "Résultat de l'ajustement : A = {} ± {} | n = {} ± {}",
         "animated_history": "Historique animé",
         "trend_h2": "Graphiques d'évolution en fonction du temps (détecteur en position verticale)",
         "rate_trend_title": "Moyenne cumulée des décomptes par minute (détecteur en position verticale)",
@@ -337,7 +337,7 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
     if not isinstance(df, pd.DataFrame):
         df = load_measurements(df)
     if df.empty:
-        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "AB_cov": 0.0, "angle": np.array([]), "fit_rate": np.array([])}
+        return {"A": 0.0, "n": 0.0, "A_unc": 0.0, "n_unc": 0.0, "angle": np.array([]), "fit_rate": np.array([])}
 
     df = df.copy()
     df["coincidences_per_minute"] = df["coincidences"] / df["duration"] * 60
@@ -350,21 +350,20 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
     angles = angle_groups["angle"].to_numpy(dtype=float)
     rates = angle_groups["mean_rate"].to_numpy(dtype=float)
     if len(angles) == 0:
-        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "AB_cov": 0.0, "angle": angles, "fit_rate": np.array([])}
+        return {"A": 0.0, "n": 0.0, "A_unc": 0.0, "n_unc": 0.0, "angle": angles, "fit_rate": np.array([])}
 
     cos_theta = np.cos(np.deg2rad(angles) - np.pi/2)
 
     def fit_for_n(n_value: float) -> Optional[Dict[str, Any]]:
         x = np.sign(cos_theta) * np.power(np.abs(cos_theta), n_value)
-        design = np.vstack([x, np.ones_like(x)]).T
         try:
-            params, residuals, rank, s = np.linalg.lstsq(design, rates, rcond=None)
+            params, residuals, rank, s = np.linalg.lstsq(x[:, np.newaxis], rates, rcond=None)
         except np.linalg.LinAlgError:
             return None
-        A_val, B_val = float(params[0]), float(params[1])
-        fit = A_val * x + B_val
+        A_val = float(params[0])
+        fit = A_val * x
         ssr = float(np.sum((rates - fit) ** 2))
-        return {"A": A_val, "B": B_val, "n": float(n_value), "ssr": ssr, "x": x}
+        return {"A": A_val, "n": float(n_value), "ssr": ssr, "x": x}
 
     best_fit = None
     for n_value in np.linspace(0.0, 5.0, 101):
@@ -375,19 +374,17 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
             best_fit = result
 
     if best_fit is None:
-        return {"A": 0.0, "n": 0.0, "B": 0.0, "A_unc": 0.0, "n_unc": 0.0, "B_unc": 0.0, "AB_cov": 0.0, "angle": angles, "fit_rate": np.array([])}
+        return {"A": 0.0, "n": 0.0, "A_unc": 0.0, "n_unc": 0.0, "angle": angles, "fit_rate": np.array([])}
 
-    design = np.vstack([best_fit["x"], np.ones_like(best_fit["x"]) ]).T
-    dof = len(rates) - 2
+    dof = len(rates) - 1
     sigma2 = best_fit["ssr"] / dof if dof > 0 else 0.0
-    cov = np.zeros((2, 2), dtype=float)
+    A_variance = 0.0
     if dof > 0:
-        xtx = design.T.dot(design)
-        if np.linalg.cond(xtx) < 1e12:
-            cov = sigma2 * np.linalg.inv(xtx)
+        x_norm_squared = float(np.dot(best_fit["x"], best_fit["x"]))
+        if x_norm_squared > 0:
+            A_variance = sigma2 / x_norm_squared
 
-    A_unc = float(math.sqrt(cov[0, 0])) if cov[0, 0] >= 0 else 0.0
-    B_unc = float(math.sqrt(cov[1, 1])) if cov[1, 1] >= 0 else 0.0
+    A_unc = float(math.sqrt(A_variance))
 
     n_unc = 0.0
     dense_n = np.linspace(max(0.0, best_fit["n"] - 0.25), min(5.0, best_fit["n"] + 0.25), 21)
@@ -402,15 +399,12 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
         if second_derivative > 0:
             n_unc = float(math.sqrt(2.0 / second_derivative))
 
-    fit_rate = best_fit["A"] * best_fit["x"] + best_fit["B"]
+    fit_rate = best_fit["A"] * best_fit["x"]
     return {
         "A": best_fit["A"],
         "n": best_fit["n"],
-        "B": best_fit["B"],
         "A_unc": A_unc,
         "n_unc": n_unc,
-        "B_unc": B_unc,
-        "AB_cov": float(cov[0, 1]),
         "angle": angles,
         "fit_rate": fit_rate,
     }
@@ -454,19 +448,22 @@ def build_angle_plot(csv_path: Union[Path, str] = DATA_FILE, fit_result: Optiona
 
     df = df.copy()
     df["coincidences_per_minute"] = df["coincidences"] / df["duration"] * 60
+    df["poisson_uncertainty_per_minute"] = _poisson_rate_uncertainties(
+        df["coincidences"], df["duration"]
+    )
 
-    grouped = df.groupby("angle")["coincidences_per_minute"]
+    grouped = df.groupby("angle")
     angle_groups = pd.DataFrame({
         "angle": list(grouped.groups.keys()),
-        "mean_rate": [float(values.mean()) for _, values in grouped],
-        "std_rate": [float(values.std(ddof=1)) if len(values) > 1 else 0.0 for _, values in grouped],
-        "count": [int(len(values)) for _, values in grouped],
+        "mean_rate": [float(values["coincidences_per_minute"].mean()) for _, values in grouped],
+        "uncertainty": [
+            float(
+                np.sqrt(np.square(values["poisson_uncertainty_per_minute"]).sum())
+                / len(values)
+            )
+            for _, values in grouped
+        ],
     })
-    angle_groups["uncertainty"] = np.where(
-        angle_groups["count"] > 1,
-        angle_groups["std_rate"] / np.sqrt(angle_groups["count"]),
-        0.0,
-    )
     angle_summary = angle_groups.sort_values("angle")
 
     fig.add_trace(go.Scatter(
@@ -485,11 +482,9 @@ def build_angle_plot(csv_path: Union[Path, str] = DATA_FILE, fit_result: Optiona
         basis_n_derivative[nonzero_cosine] = (
             fit_basis[nonzero_cosine] * np.log(abs_fit_cosine[nonzero_cosine])
         )
-        fit_rate = fit_result["A"] * fit_basis + fit_result["B"]
+        fit_rate = fit_result["A"] * fit_basis
         fit_variance = (
             np.square(fit_basis * fit_result["A_unc"])
-            + fit_result.get("B_unc", 0.0) ** 2
-            + 2 * fit_basis * fit_result.get("AB_cov", 0.0)
             + np.square(fit_result["A"] * basis_n_derivative * fit_result["n_unc"])
         )
         fit_uncertainty = np.sqrt(np.maximum(fit_variance, 0.0))
@@ -834,8 +829,6 @@ def build_angle_page(df: pd.DataFrame = None, fit_requested: bool = False, lang:
                             f"{fit_result['A_unc']:.2f}",
                             f"{fit_result['n']:.2f}",
                             f"{fit_result['n_unc']:.2f}",
-                            f"{fit_result['B']:.2f}",
-                            f"{fit_result['B_unc']:.2f}",
                         )
                     ) if fit_requested else None,
                 ],
