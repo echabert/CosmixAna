@@ -1,10 +1,12 @@
 import math
 import os
+import re
 import base64
 import binascii
 import configparser
+import html as html_std
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 
 import numpy as np
@@ -44,6 +46,15 @@ TRANSLATIONS = {
         "export_no_charts": "No charts available to export.",
         "export_success": "Saved {} images in exports/",
         "export_error": "Image export failed.",
+        "export_report_title": "Exported images report",
+        "export_report_intro": "This page is generated automatically by the application. It gathers the PNG images saved in the exports/ folder by the 'Export images' button of the 'Poisson law', 'Trend plots' and 'Angle dependence' pages. Each group corresponds to one dated export of a page: the figures are identical to the charts displayed in the application at export time.",
+        "export_report_poisson_context": "Poisson law check on the 60-second acquisitions at 90°. The histograms show the distribution of the count rates (detector 1, detector 2 and coincidences). If the data follow a Poisson law, the observed distribution matches a Poisson distribution of parameter μ (the mean); the 'Activate fit' button of the application overlays this fit with its χ² probability. The last three figures show each histogram accumulating as acquisitions are added.",
+        "export_report_trends_context": "Evolution over time of the count rates per minute, acquisition by acquisition (detector in vertical position), with their Poisson uncertainties. The second figure shows the cumulative mean of these rates, which stabilizes toward the mean value of the cosmic radiation flux.",
+        "export_report_trend_figure": "Count rate per minute of each acquisition (detector in vertical position)",
+        "export_report_angle_context": "Angular dependence of the mean coincidence rate per minute. The points are the mean coincidence rate for each angle, fitted with the model f(θ) = A·cos(θ−π/2)^n (shaded area: fit uncertainty). The last two figures track the evolution of the fitted parameters A and n as measurements are added.",
+        "export_report_batch": "Export from {}",
+        "export_report_generated": "Report generated on {}",
+        "export_report_no_images": "No exported images for this page yet.",
         "last_measurement_summary": "Last measurement summary",
         "measurement_time_label": "Recorded",
         "measurement_operator_label": "Operator",
@@ -114,6 +125,15 @@ TRANSLATIONS = {
         "export_no_charts": "Aucun graphique à exporter.",
         "export_success": "{} images enregistrées dans exports/",
         "export_error": "Échec de l'export des images.",
+        "export_report_title": "Rapport des images exportées",
+        "export_report_intro": "Cette page est générée automatiquement par l'application. Elle rassemble les images PNG enregistrées dans le dossier exports/ par le bouton « Exporter les images » des pages « Loi de Poisson », « Évolutions » et « Dépendance angulaire ». Chaque groupe correspond à un export daté d'une page : les figures sont identiques aux graphiques affichés dans l'application au moment de l'export.",
+        "export_report_poisson_context": "Vérification de la loi de Poisson sur les prises de 60 secondes à 90°. Les histogrammes montrent la distribution des taux de comptage (détecteur 1, détecteur 2 et coïncidences). Si les données suivent une loi de Poisson, la distribution observée correspond à une loi de Poisson de paramètre μ (la moyenne) ; le bouton « Activer l'ajustement » de l'application superpose cet ajustement avec sa probabilité χ². Les trois dernières figures montrent l'accumulation de chaque histogramme au fil des prises.",
+        "export_report_trends_context": "Évolution dans le temps des décomptes par minute, prise après prise (détecteur en position verticale), avec leurs incertitudes d'origine de Poisson. Le second graphique montre la moyenne cumulée de ces taux, qui se stabilise vers la valeur moyenne du flux de rayonnement cosmique.",
+        "export_report_trend_figure": "Décomptes par minute de chaque prise (détecteur en position verticale)",
+        "export_report_angle_context": "Dépendance angulaire du taux moyen de coïncidences par minute. Les points représentent le taux moyen de coïncidences pour chaque angle, ajusté avec le modèle f(θ) = A·cos(θ−π/2)^n (zone ombrée : incertitude de l'ajustement). Les deux derniers graphiques suivent l'évolution des paramètres ajustés A et n au fur et à mesure que les mesures sont ajoutées.",
+        "export_report_batch": "Export du {}",
+        "export_report_generated": "Rapport généré le {}",
+        "export_report_no_images": "Aucune image exportée pour cette page pour l'instant.",
         "last_measurement_summary": "Résumé de la dernière mesure",
         "measurement_time_label": "Date et heure",
         "measurement_operator_label": "Opérateur",
@@ -720,10 +740,7 @@ def _filter_poisson_measurements(df: pd.DataFrame) -> pd.DataFrame:
     ].copy()
 
 
-def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lang: str = "fr"):
-    if df is None:
-        df = load_measurements(DATA_FILE)
-    df = _filter_poisson_measurements(df)
+def build_last_measurement_panel(df: pd.DataFrame, lang: str = "fr", scope_text: str = None):
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     summary = build_comparison_summary(df)
     last_row = df.iloc[-1] if not df.empty else None
@@ -755,6 +772,25 @@ def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lan
                 for label, value in summary_fields
             ],
         )
+    heading_children = [html.B(t["last_measurement_summary"])]
+    if scope_text is not None:
+        heading_children.append(html.Span(scope_text, className="poisson-summary-scope"))
+    return html.Div(
+        className="summary-panel summary-panel--poisson",
+        children=[
+            html.Div(className="poisson-summary-heading", children=heading_children),
+            last_measurement_content,
+            html.Div(summary["compatibility"], className="poisson-summary-compatibility"),
+        ],
+    )
+
+
+def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lang: str = "fr"):
+    if df is None:
+        df = load_measurements(DATA_FILE)
+    df = _filter_poisson_measurements(df)
+    t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
+    summary_panel = build_last_measurement_panel(df, lang=lang, scope_text=t["poisson_scope"])
 
     fit_results = []
     titles = [t.get("count1_title"), t.get("count2_title"), t.get("coincidences_title")]
@@ -807,20 +843,7 @@ def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lan
                     dcc.Link(t["link_angle"], href="/angle"),
                 ],
             ),
-            html.Div(
-                className="summary-panel summary-panel--poisson",
-                children=[
-                    html.Div(
-                        className="poisson-summary-heading",
-                        children=[
-                            html.B(t["last_measurement_summary"]),
-                            html.Span(t["poisson_scope"], className="poisson-summary-scope"),
-                        ],
-                    ),
-                    last_measurement_content,
-                    html.Div(summary["compatibility"], className="poisson-summary-compatibility"),
-                ],
-            ),
+            summary_panel,
             build_measurement_controls(visible=False, lang=lang),
             html.H3(t["current_distributions"], className="section-heading"),
             html.Div(
@@ -854,7 +877,7 @@ def build_trend_page(df: pd.DataFrame = None, lang: str = "fr"):
     if df is None:
         df = load_measurements(DATA_FILE)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
-    summary = build_comparison_summary(df)
+    summary_panel = build_last_measurement_panel(df, lang=lang)
     return html.Div(
         className="page-content",
         children=[
@@ -868,14 +891,7 @@ def build_trend_page(df: pd.DataFrame = None, lang: str = "fr"):
                     dcc.Link(t["link_angle"], href="/angle"),
                 ],
             ),
-            html.Div(
-                className="summary-panel",
-                children=[
-                    html.B(t["last_measurement_summary"]),
-                    html.Div(summary["last_measurement"]),
-                    html.Div(summary["compatibility"]),
-                ],
-            ),
+            summary_panel,
             build_measurement_controls(visible=False, lang=lang),
             html.Div(className="chart-panel", children=dcc.Graph(className="plot-panel", figure=build_trend_plot(DATA_FILE, lang=lang))),
             html.Div(className="chart-panel", children=dcc.Graph(className="plot-panel", figure=build_rate_trend_plot(DATA_FILE, lang=lang))),
@@ -887,7 +903,7 @@ def build_angle_page(df: pd.DataFrame = None, fit_requested: bool = False, lang:
     if df is None:
         df = load_measurements(DATA_FILE)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
-    summary = build_comparison_summary(df)
+    summary_panel = build_last_measurement_panel(df, lang=lang)
     fit_result = build_angle_fit_result(df, lang=lang) if fit_requested else None
     fit_history = build_angle_fit_history(df)
     return html.Div(
@@ -903,14 +919,7 @@ def build_angle_page(df: pd.DataFrame = None, fit_requested: bool = False, lang:
                     dcc.Link(t["link_angle"], href="/angle"),
                 ],
             ),
-            html.Div(
-                className="summary-panel",
-                children=[
-                    html.B(t["last_measurement_summary"]),
-                    html.Div(summary["last_measurement"]),
-                    html.Div(summary["compatibility"]),
-                ],
-            ),
+            summary_panel,
             html.Div(
                 className="fit-action-row",
                 children=[
@@ -1036,7 +1045,16 @@ def create_app() -> Dash:
         except OSError:
             return jsonify({"error": "Could not save exported images"}), 500
 
-        return jsonify({"directory": EXPORT_DIR.name, "files": filenames})
+        try:
+            report = write_export_report(EXPORT_DIR)
+        except Exception:
+            report = None
+
+        return jsonify({
+            "directory": EXPORT_DIR.name,
+            "files": filenames,
+            "report": report.name if report is not None else None,
+        })
 
     @app.callback(
         Output("export-page-button", "children"),
@@ -1148,6 +1166,218 @@ def build_comparison_summary(df: pd.DataFrame) -> Dict[str, str]:
         compatibility = f"Compatibilité avec les mesures précédentes : {probability_text}."
 
     return {"last_measurement": last_measurement, "compatibility": compatibility}
+
+
+EXPORT_REPORT_FILENAME = "index.html"
+_EXPORT_IMAGE_RE = re.compile(
+    r"^(?P<page>poisson|trends|angle)_(?P<date>\d{8})_(?P<time>\d{6})_(?P<micro>\d{6})_(?P<index>\d{2})\.png$"
+)
+
+
+def _collect_export_batches(directory: Path) -> Dict[str, Dict[str, List[tuple]]]:
+    batches: Dict[str, Dict[str, List[tuple]]] = {page: {} for page in ("poisson", "trends", "angle")}
+    try:
+        files = list(directory.iterdir())
+    except OSError:
+        return batches
+    for file in files:
+        match = _EXPORT_IMAGE_RE.match(file.name)
+        if not match or not file.is_file():
+            continue
+        batch_key = f"{match['date']}_{match['time']}_{match['micro']}"
+        batches[match["page"]].setdefault(batch_key, []).append((int(match["index"]), file.name))
+    return batches
+
+
+def _export_batch_label(batch_key: str, t: Dict[str, str]) -> str:
+    date_part, time_part, _micro = batch_key.split("_")
+    try:
+        when = datetime.strptime(f"{date_part}_{time_part}", "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        when = batch_key
+    return t["export_report_batch"].format(when)
+
+
+def _export_figure_caption(page_name: str, index: int, t: Dict[str, str]) -> str:
+    if page_name == "poisson":
+        titles = [t["count1_title"], t["count2_title"], t["coincidences_title"]]
+        if 1 <= index <= 3:
+            return t["histogram_title"].format(titles[index - 1])
+        if 4 <= index <= 6:
+            return t["histogram_over_time"].format(titles[index - 4])
+    elif page_name == "trends":
+        if index == 1:
+            return t["export_report_trend_figure"]
+        if index == 2:
+            return t["rate_trend_title"]
+    elif page_name == "angle":
+        if index == 1:
+            return t["angle_plot_title"]
+        if index == 2:
+            return t["angle_a_history_title"]
+        if index == 3:
+            return t["angle_n_history_title"]
+    return f"Figure {index:02d}"
+
+
+def build_export_report_html(directory: Union[Path, str] = None, lang: str = "fr") -> str:
+    t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
+    export_dir = Path(directory) if directory is not None else EXPORT_DIR
+    batches = _collect_export_batches(export_dir)
+
+    try:
+        site_css = (BASE_DIR / "assets" / "style.css").read_text(encoding="utf-8")
+    except OSError:
+        site_css = ""
+
+    section_meta = [
+        ("poisson", t["poisson_h2"], t["export_report_poisson_context"]),
+        ("trends", t["trend_h2"], t["export_report_trends_context"]),
+        ("angle", t["angle_h2"], t["export_report_angle_context"]),
+    ]
+    nav_links = []
+    sections = []
+    for page_name, heading, context in section_meta:
+        nav_links.append(f'<a href="#{page_name}">{html_std.escape(heading)}</a>')
+        page_batches = batches[page_name]
+        if not page_batches:
+            body = f'<div class="summary-panel"><b>{html_std.escape(t["export_report_no_images"])}</b></div>'
+        else:
+            batches_html = []
+            for batch_key in sorted(page_batches):
+                entries = sorted(page_batches[batch_key])
+                figures = []
+                for index, filename in entries:
+                    caption = _export_figure_caption(page_name, index, t)
+                    figures.append(
+                        '<figure class="report-figure">'
+                        f'<img src="{html_std.escape(filename, quote=True)}" '
+                        f'alt="{html_std.escape(caption)}" loading="lazy">'
+                        f'<figcaption>{html_std.escape(caption)}</figcaption>'
+                        "</figure>"
+                    )
+                count = len(entries)
+                badge = f"{count} image" if count == 1 else f"{count} images"
+                batches_html.append(
+                    '<div class="report-batch">'
+                    f'<div class="poisson-summary-heading"><b>{html_std.escape(_export_batch_label(batch_key, t))}</b>'
+                    f'<span class="poisson-summary-scope">{badge}</span></div>'
+                    f'<div class="report-batch-grid">{"".join(figures)}</div>'
+                    "</div>"
+                )
+            body = "".join(batches_html)
+        sections.append(
+            f'<section class="report-section" id="{page_name}">'
+            f'<h2 class="section-heading">{html_std.escape(heading)}</h2>'
+            f'<p class="report-context">{html_std.escape(context)}</p>'
+            f"{body}"
+            "</section>"
+        )
+
+    report_css = """
+.report-context {
+    max-width: 980px;
+    margin: 0 0 18px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+}
+.report-section {
+    margin-top: 34px;
+}
+.report-section > .section-heading {
+    margin-top: 0;
+}
+.report-batch {
+    margin: 0 0 22px;
+    padding: 16px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--teal);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+.report-batch-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+.report-figure {
+    margin: 0;
+}
+.report-figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+.report-figure figcaption {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+    .report-batch-grid {
+        grid-template-columns: 1fr;
+    }
+}
+"""
+
+    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    return f"""<!DOCTYPE html>
+<html lang="{lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html_std.escape(t['app_title'])} — {html_std.escape(t['export_report_title'])}</title>
+<style>
+{site_css}
+{report_css}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand-lockup">
+      <span class="brand-mark">CD</span>
+      <div>
+        <div class="brand-title">{html_std.escape(t['app_title'])}</div>
+        <div class="brand-caption">DETECTOR LAB / DATA SYSTEM</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="export-status">{html_std.escape(t['export_report_generated'].format(generated))}</span>
+    </div>
+  </header>
+  <main class="page-slot">
+    <div class="page-content">
+      <h1 class="page-title">{html_std.escape(t['export_report_title'])}</h1>
+      <div class="page-nav">{''.join(nav_links)}</div>
+      <div class="summary-panel">
+        <b>{html_std.escape(t['export_report_title'])}</b>
+        <div>{html_std.escape(t['export_report_intro'])}</div>
+      </div>
+      {''.join(sections)}
+    </div>
+  </main>
+</div>
+</body>
+</html>
+"""
+
+
+def write_export_report(directory: Union[Path, str] = None) -> Optional[Path]:
+    export_dir = Path(directory) if directory is not None else EXPORT_DIR
+    try:
+        report_path = export_dir / EXPORT_REPORT_FILENAME
+        report_path.write_text(build_export_report_html(export_dir), encoding="utf-8")
+        return report_path
+    except OSError:
+        return None
 
 
 def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, title: str) -> Dict[str, Any]:

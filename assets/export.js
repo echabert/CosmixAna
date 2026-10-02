@@ -39,9 +39,18 @@
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || "Image export failed");
             if (status) {
-                status.textContent = isEnglish
+                const saved = isEnglish
                     ? "Saved " + result.files.length + " images in exports/"
                     : result.files.length + " images enregistrées dans exports/";
+                if (result.report) {
+                    status.textContent = isEnglish
+                        ? saved + " — report updated (exports/" + result.report + ")"
+                        : saved + " — rapport mis à jour (exports/" + result.report + ")";
+                } else {
+                    status.textContent = isEnglish
+                        ? saved + " — HTML report not updated."
+                        : saved + " — rapport HTML non mis à jour.";
+                }
             }
         } catch (error) {
             if (status) status.textContent = isEnglish ? "Image export failed." : "Échec de l'export des images.";
