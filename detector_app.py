@@ -1,5 +1,7 @@
 import math
 import os
+import base64
+import binascii
 import configparser
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
@@ -10,6 +12,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from DataTaking import countD
+from flask import jsonify, request
 
 try:
     from scipy.stats import chi2 as chi2_dist
@@ -22,6 +25,7 @@ from dash import Dash, dcc, html, Input, Output, State, dash_table, no_update
 BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "detector_measurements.csv"
 ANGLE_PARAMETERS_FILE = BASE_DIR / "def_param.cfi"
+EXPORT_DIR = BASE_DIR / "exports"
 POISSON_ACQUISITION_DURATION = 60
 POISSON_ACQUISITION_ANGLE = 90
 
@@ -35,7 +39,17 @@ TRANSLATIONS = {
         "link_poisson": "Poisson law",
         "link_trends": "Trend plots",
         "link_angle": "Angle dependence",
+        "export_images": "Export images",
+        "exporting_images": "Exporting…",
+        "export_no_charts": "No charts available to export.",
+        "export_success": "Saved {} images in exports/",
+        "export_error": "Image export failed.",
         "last_measurement_summary": "Last measurement summary",
+        "measurement_time_label": "Recorded",
+        "measurement_operator_label": "Operator",
+        "measurement_duration_label": "Duration",
+        "measurement_angle_label": "Angle",
+        "poisson_scope": "60-second acquisition at 90°",
         "run_measurement_hint": "Run a new measurement to update the summary.",
         "duration_label": "Duration (s): ",
         "person_label": "Operator name: ",
@@ -55,6 +69,11 @@ TRANSLATIONS = {
         "angle_fit_uncertainty": "Fit uncertainty",
         "angle_plot_title": "Mean coincidence rate per minute versus angle",
         "angle_ylabel": "Coincidences per minute",
+        "angle_a_history_title": "Fitted A as measurements are added",
+        "angle_n_history_title": "Fitted n as measurements are added",
+        "angle_history_x": "Measurements included",
+        "angle_a_axis": "A (coincidences/min)",
+        "angle_n_axis": "n",
         "angle_fit_summary": "Fit result: A = {} ± {} | n = {} ± {}",
         "animated_history": "Animated history",
         "trend_h2": "Trend plots (detector in vertical position)",
@@ -90,7 +109,17 @@ TRANSLATIONS = {
         "link_poisson": "Loi de Poisson",
         "link_trends": "Évolutions",
         "link_angle": "Dépendance angulaire",
+        "export_images": "Exporter les images",
+        "exporting_images": "Export en cours…",
+        "export_no_charts": "Aucun graphique à exporter.",
+        "export_success": "{} images enregistrées dans exports/",
+        "export_error": "Échec de l'export des images.",
         "last_measurement_summary": "Résumé de la dernière mesure",
+        "measurement_time_label": "Date et heure",
+        "measurement_operator_label": "Opérateur",
+        "measurement_duration_label": "Durée",
+        "measurement_angle_label": "Angle",
+        "poisson_scope": "Prise de 60 s à 90°",
         "run_measurement_hint": "Exécutez une nouvelle mesure pour mettre à jour le résumé.",
         "duration_label": "Durée (s) : ",
         "person_label": "Nom de l'opérateur : ",
@@ -110,6 +139,11 @@ TRANSLATIONS = {
         "angle_fit_uncertainty": "Incertitude de l'ajustement",
         "angle_plot_title": "Taux moyen de coïncidences par minute en fonction de l'angle",
         "angle_ylabel": "Coïncidences par minute",
+        "angle_a_history_title": "Évolution de A selon les mesures ajoutées",
+        "angle_n_history_title": "Évolution de n selon les mesures ajoutées",
+        "angle_history_x": "Nombre de mesures incluses",
+        "angle_a_axis": "A (coïncidences/min)",
+        "angle_n_axis": "n",
         "angle_fit_summary": "Résultat de l'ajustement : A = {} ± {} | n = {} ± {}",
         "animated_history": "Historique animé",
         "trend_h2": "Graphiques d'évolution en fonction du temps (détecteur en position verticale)",
@@ -393,11 +427,16 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
         result = fit_for_n(n_value)
         ssr_values.append(result["ssr"] if result is not None else float("inf"))
     min_index = int(np.argmin(ssr_values))
-    if 0 < min_index < len(ssr_values) - 1:
+    if len(ssr_values) >= 3 and sigma2 > 0:
         h = dense_n[1] - dense_n[0]
-        second_derivative = (ssr_values[min_index + 1] - 2.0 * ssr_values[min_index] + ssr_values[min_index - 1]) / (h * h)
+        if min_index == 0:
+            second_derivative = (ssr_values[2] - 2.0 * ssr_values[1] + ssr_values[0]) / (h * h)
+        elif min_index == len(ssr_values) - 1:
+            second_derivative = (ssr_values[-1] - 2.0 * ssr_values[-2] + ssr_values[-3]) / (h * h)
+        else:
+            second_derivative = (ssr_values[min_index + 1] - 2.0 * ssr_values[min_index] + ssr_values[min_index - 1]) / (h * h)
         if second_derivative > 0:
-            n_unc = float(math.sqrt(2.0 / second_derivative))
+            n_unc = float(math.sqrt(2.0 * sigma2 / second_derivative))
 
     fit_rate = best_fit["A"] * best_fit["x"]
     return {
@@ -408,6 +447,60 @@ def build_angle_fit_result(df: Union[pd.DataFrame, Path, str], lang: str = "fr")
         "angle": angles,
         "fit_rate": fit_rate,
     }
+
+
+def build_angle_fit_history(df: Union[pd.DataFrame, Path, str]) -> Dict[str, np.ndarray]:
+    if not isinstance(df, pd.DataFrame):
+        df = load_measurements(df)
+    if df.empty:
+        return {key: np.array([]) for key in ("measurement", "A", "A_unc", "n", "n_unc")}
+
+    ordered = df.dropna(subset=["time", "angle", "duration", "coincidences"]).copy()
+    ordered["time"] = pd.to_datetime(ordered["time"], errors="coerce")
+    ordered = ordered.dropna(subset=["time"]).sort_values("time", kind="stable").reset_index(drop=True)
+
+    history = {key: [] for key in ("measurement", "A", "A_unc", "n", "n_unc")}
+    for index in range(len(ordered)):
+        cumulative = ordered.iloc[:index + 1]
+        if cumulative["angle"].nunique() < 3:
+            continue
+        fit = build_angle_fit_result(cumulative)
+        if len(fit["angle"]) < 3:
+            continue
+        history["measurement"].append(index + 1)
+        for parameter in ("A", "n"):
+            history[parameter].append(fit[parameter])
+            history[f"{parameter}_unc"].append(fit[f"{parameter}_unc"])
+
+    return {key: np.asarray(values, dtype=float) for key, values in history.items()}
+
+
+def build_angle_fit_history_plot(
+    history: Dict[str, np.ndarray], parameter: str, lang: str = "fr"
+):
+    t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
+    if parameter == "A":
+        title = t["angle_a_history_title"]
+        yaxis_title = t["angle_a_axis"]
+    else:
+        title = t["angle_n_history_title"]
+        yaxis_title = t["angle_n_axis"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=history["measurement"],
+        y=history[parameter],
+        mode="lines+markers",
+        name=parameter,
+        error_y=dict(type="data", array=history[f"{parameter}_unc"], visible=True),
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis_title=t["angle_history_x"],
+        yaxis_title=yaxis_title,
+        template="plotly_white",
+    )
+    return fig
 
 
 def load_angle_curve_parameters() -> Dict[str, float]:
@@ -421,7 +514,7 @@ def load_angle_curve_parameters() -> Dict[str, float]:
 
 
 def build_angle_plot(csv_path: Union[Path, str] = DATA_FILE, fit_result: Optional[Dict[str, Any]] = None, lang: str = "fr"):
-    df = load_measurements(csv_path)
+    df = csv_path.copy() if isinstance(csv_path, pd.DataFrame) else load_measurements(csv_path)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     fig = go.Figure()
     curve_angles = np.linspace(0.0, 180.0, 361)
@@ -525,24 +618,24 @@ def build_angle_plot(csv_path: Union[Path, str] = DATA_FILE, fit_result: Optiona
 def build_measurement_controls(visible: bool = True, lang: str = "fr"):
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     return html.Div(
+        className="measurement-controls",
         style={"display": "flex" if visible else "none", "gap": "12px", "flexWrap": "wrap", "alignItems": "flex-end", "marginBottom": "16px"},
         children=[
             html.Div(
-                style={"display": "flex", "flexDirection": "column", "minWidth": "180px"},
-                children=[html.Label(t["person_label"]), dcc.Input(id="person", type="text", value="", placeholder=t["person_placeholder"], style={"width": "100%"})],
+                className="control-field",
+                children=[html.Label(t["person_label"]), dcc.Input(id="person", type="text", value="", placeholder=t["person_placeholder"])],
             ),
             html.Div(
-                style={"display": "flex", "flexDirection": "column", "minWidth": "120px"},
-                children=[html.Label(t["duration_label"]), dcc.Input(id="duration", type="number", value=60, min=1, step=1, style={"width": "80px"})],
+                className="control-field control-field--duration",
+                children=[html.Label(t["duration_label"]), dcc.Input(id="duration", type="number", value=60, min=1, step=1)],
             ),
             html.Div(
-                style={"display": "flex", "flexDirection": "column", "minWidth": "120px"},
+                className="control-field control-field--angle",
                 children=[html.Label(t["angle_label"]), dcc.Dropdown(
                     id="angle",
                     options=[{"label": str(v), "value": v} for v in [10*i for i in range(19)]],
                     value=90,
                     clearable=False,
-                    style={"width": "100%"},
                 )],
             ),
             html.Button(
@@ -550,17 +643,6 @@ def build_measurement_controls(visible: bool = True, lang: str = "fr"):
                 id="run-button",
                 n_clicks=0,
                 type="button",
-                style={
-                    "display": "block",
-                    "padding": "10px 18px",
-                    "border": "0",
-                    "borderRadius": "4px",
-                    "backgroundColor": "#2b6cb0",
-                    "color": "white",
-                    "fontWeight": "bold",
-                    "cursor": "pointer",
-                    "marginBottom": "16px",
-                },
             ),
         ],
     )
@@ -574,23 +656,23 @@ def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str 
     if status_text is None:
         status_text = t["waiting_first"]
     return html.Div(
-        style={"padding": "24px", "fontFamily": "Arial, sans-serif"},
+        className="page-content page-content--home",
         children=[
             html.H2(t["home_h2"]),
             html.P(t["home_p"]),
             html.Div(
-                style={"marginBottom": "16px"},
+                className="page-nav",
                 children=[
-                    dcc.Link(t["link_home"], href="/", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_poisson"], href="/poisson", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_trends"], href="/trends", style={"marginRight": "12px"}),
+                    dcc.Link(t["link_home"], href="/"),
+                    dcc.Link(t["link_poisson"], href="/poisson"),
+                    dcc.Link(t["link_trends"], href="/trends"),
                     dcc.Link(t["link_angle"], href="/angle"),
                 ],
             ),
-            html.Div(id="status-output", style={"marginTop": "12px", "fontWeight": "bold"}, children=status_text),
-            html.Hr(),
+            html.Div(id="status-output", className="status-message", children=status_text),
+            html.Hr(className="section-rule"),
             html.Div(
-                style={"marginBottom": "16px", "padding": "12px", "border": "1px solid #ddd", "borderRadius": "6px"},
+                className="summary-panel summary-panel--hint",
                 children=[
                     html.B(t["last_measurement_summary"]),
                     html.Div(t["run_measurement_hint"]),
@@ -599,19 +681,21 @@ def build_home_page(status_text: str = None, df: pd.DataFrame = None, lang: str 
             build_measurement_controls(visible=True, lang=lang),
             html.Div(
                 id="measurement-progress-container",
+                className="measurement-progress",
                 style={"maxHeight": "0", "opacity": 0, "overflow": "hidden", "margin": "0 24px", "transition": "max-height 150ms ease, opacity 150ms ease"},
                 children=[
-                    html.Div(id="measurement-progress-label"),
+                    html.Div(id="measurement-progress-label", className="measurement-progress__label"),
                     html.Div(
-                        style={"height": "10px", "backgroundColor": "#e2e8f0", "borderRadius": "5px", "overflow": "hidden"},
+                        className="measurement-progress__track",
                         children=html.Div(
                             id="measurement-progress-bar",
-                            style={"height": "100%", "width": "0%", "backgroundColor": "#2b6cb0", "transition": "width 100ms linear"},
+                            className="measurement-progress__bar",
+                            style={"height": "100%", "width": "0%", "transition": "width 100ms linear"},
                         ),
                     ),
                 ],
             ),
-            html.H3(t["latest_measurements"]),
+            html.H3(t["latest_measurements"], className="section-heading"),
             dcc.Loading(children=[
                 dash_table.DataTable(
                     id="measurements-table",
@@ -642,6 +726,35 @@ def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lan
     df = _filter_poisson_measurements(df)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     summary = build_comparison_summary(df)
+    last_row = df.iloc[-1] if not df.empty else None
+    if last_row is None:
+        last_measurement_content = html.Div(
+            summary["last_measurement"],
+            className="poisson-summary-empty",
+        )
+    else:
+        summary_fields = [
+            (t["measurement_time_label"], str(last_row["time"])),
+            (t["measurement_operator_label"], str(last_row["person"])),
+            (t["measurement_duration_label"], f"{float(last_row['duration']):g} s"),
+            (t["measurement_angle_label"], f"{float(last_row['angle']):g}°"),
+            (t["count1_title"], str(int(last_row["count_1"]))),
+            (t["count2_title"], str(int(last_row["count_2"]))),
+            (t["coincidences_title"], str(int(last_row["coincidences"]))),
+        ]
+        last_measurement_content = html.Div(
+            className="poisson-summary-grid",
+            children=[
+                html.Div(
+                    className="poisson-summary-field",
+                    children=[
+                        html.Span(label, className="poisson-summary-field__label"),
+                        html.Strong(value, className="poisson-summary-field__value"),
+                    ],
+                )
+                for label, value in summary_fields
+            ],
+        )
 
     fit_results = []
     titles = [t.get("count1_title"), t.get("count2_title"), t.get("coincidences_title")]
@@ -676,63 +789,61 @@ def build_poisson_page(df: pd.DataFrame = None, fit_requested: bool = False, lan
     else:
         fit_summary = [
             html.Div(
-                style={"padding": "12px", "border": "1px dashed #ccc", "borderRadius": "6px", "color": "#666"},
+                className="fit-note",
                 children="Cliquez sur le bouton d'ajustement pour superposer un ajustement de Poisson sur chaque histogramme.",
             )
         ]
 
     return html.Div(
-        style={"padding": "24px", "fontFamily": "Arial, sans-serif"},
+        className="page-content",
         children=[
-            html.H2(t["poisson_h2"]),
+            html.H2(t["poisson_h2"], className="page-title"),
             html.Div(
-                style={"marginBottom": "16px"},
+                className="page-nav",
                 children=[
-                    dcc.Link(t["link_home"], href="/", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_poisson"], href="/poisson", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_trends"], href="/trends", style={"marginRight": "12px"}),
+                    dcc.Link(t["link_home"], href="/"),
+                    dcc.Link(t["link_poisson"], href="/poisson"),
+                    dcc.Link(t["link_trends"], href="/trends"),
                     dcc.Link(t["link_angle"], href="/angle"),
                 ],
             ),
             html.Div(
-                style={"marginBottom": "16px", "padding": "12px", "border": "1px solid #ddd", "borderRadius": "6px"},
+                className="summary-panel summary-panel--poisson",
                 children=[
-                    html.B(t["last_measurement_summary"]),
-                    html.Div(summary["last_measurement"]),
-                    html.Div(summary["compatibility"]),
+                    html.Div(
+                        className="poisson-summary-heading",
+                        children=[
+                            html.B(t["last_measurement_summary"]),
+                            html.Span(t["poisson_scope"], className="poisson-summary-scope"),
+                        ],
+                    ),
+                    last_measurement_content,
+                    html.Div(summary["compatibility"], className="poisson-summary-compatibility"),
                 ],
             ),
             build_measurement_controls(visible=False, lang=lang),
-            html.H3(t["current_distributions"]),
+            html.H3(t["current_distributions"], className="section-heading"),
             html.Div(
-                style={"marginBottom": "16px"},
+                className="fit-action-row",
                 children=[
                     dcc.Link(
                         t["activate_fit"],
                         href="/poisson?fit=1",
-                        style={
-                            "display": "inline-block",
-                            "padding": "8px 12px",
-                            "border": "1px solid #2b6cb0",
-                            "borderRadius": "6px",
-                            "backgroundColor": "#ebf8ff",
-                            "color": "#2b6cb0",
-                            "textDecoration": "none",
-                        },
+                        className="action-link",
                     )
                 ],
             ),
             html.Div(
-                style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(320px, 1fr))", "gap": "16px", "marginBottom": "24px"},
+                className="chart-grid chart-grid--three",
                 children=static_histograms,
             ),
             html.Div(
-                style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(220px, 1fr))", "gap": "12px", "marginBottom": "24px"},
+                className="fit-summary-grid",
                 children=fit_summary,
             ),
-            html.H3("Historique animé"),
+            html.H3(t["animated_history"], className="section-heading"),
             html.Div(
-                style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(320px, 1fr))", "gap": "16px"},
+                className="chart-grid chart-grid--three",
                 children=animated_histograms,
             ),
         ],
@@ -745,20 +856,20 @@ def build_trend_page(df: pd.DataFrame = None, lang: str = "fr"):
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     summary = build_comparison_summary(df)
     return html.Div(
-        style={"padding": "24px", "fontFamily": "Arial, sans-serif"},
+        className="page-content",
         children=[
-            html.H2(t.get("trend_h2", "Graphiques d'évolution")),
+            html.H2(t.get("trend_h2", "Graphiques d'évolution"), className="page-title"),
             html.Div(
-                style={"marginBottom": "16px"},
+                className="page-nav",
                 children=[
-                    dcc.Link(t["link_home"], href="/", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_poisson"], href="/poisson", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_trends"], href="/trends", style={"marginRight": "12px"}),
+                    dcc.Link(t["link_home"], href="/"),
+                    dcc.Link(t["link_poisson"], href="/poisson"),
+                    dcc.Link(t["link_trends"], href="/trends"),
                     dcc.Link(t["link_angle"], href="/angle"),
                 ],
             ),
             html.Div(
-                style={"marginBottom": "16px", "padding": "12px", "border": "1px solid #ddd", "borderRadius": "6px"},
+                className="summary-panel",
                 children=[
                     html.B(t["last_measurement_summary"]),
                     html.Div(summary["last_measurement"]),
@@ -766,9 +877,8 @@ def build_trend_page(df: pd.DataFrame = None, lang: str = "fr"):
                 ],
             ),
             build_measurement_controls(visible=False, lang=lang),
-            dcc.Graph(figure=build_trend_plot(DATA_FILE, lang=lang)),
-            html.Br(),
-            dcc.Graph(figure=build_rate_trend_plot(DATA_FILE, lang=lang)),
+            html.Div(className="chart-panel", children=dcc.Graph(className="plot-panel", figure=build_trend_plot(DATA_FILE, lang=lang))),
+            html.Div(className="chart-panel", children=dcc.Graph(className="plot-panel", figure=build_rate_trend_plot(DATA_FILE, lang=lang))),
         ],
     )
 
@@ -779,21 +889,22 @@ def build_angle_page(df: pd.DataFrame = None, fit_requested: bool = False, lang:
     t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
     summary = build_comparison_summary(df)
     fit_result = build_angle_fit_result(df, lang=lang) if fit_requested else None
+    fit_history = build_angle_fit_history(df)
     return html.Div(
-        style={"padding": "24px", "fontFamily": "Arial, sans-serif"},
+        className="page-content",
         children=[
-            html.H2(t.get("angle_h2", "Dépendance angulaire")),
+            html.H2(t.get("angle_h2", "Dépendance angulaire"), className="page-title"),
             html.Div(
-                style={"marginBottom": "16px"},
+                className="page-nav",
                 children=[
-                    dcc.Link(t["link_home"], href="/", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_poisson"], href="/poisson", style={"marginRight": "12px"}),
-                    dcc.Link(t["link_trends"], href="/trends", style={"marginRight": "12px"}),
+                    dcc.Link(t["link_home"], href="/"),
+                    dcc.Link(t["link_poisson"], href="/poisson"),
+                    dcc.Link(t["link_trends"], href="/trends"),
                     dcc.Link(t["link_angle"], href="/angle"),
                 ],
             ),
             html.Div(
-                style={"marginBottom": "16px", "padding": "12px", "border": "1px solid #ddd", "borderRadius": "6px"},
+                className="summary-panel",
                 children=[
                     html.B(t["last_measurement_summary"]),
                     html.Div(summary["last_measurement"]),
@@ -801,25 +912,17 @@ def build_angle_page(df: pd.DataFrame = None, fit_requested: bool = False, lang:
                 ],
             ),
             html.Div(
-                style={"marginBottom": "16px"},
+                className="fit-action-row",
                 children=[
                     dcc.Link(
                         t["activate_fit"],
                         href="/angle?fit=1",
-                        style={
-                            "display": "inline-block",
-                            "padding": "8px 12px",
-                            "border": "1px solid #2b6cb0",
-                            "borderRadius": "6px",
-                            "backgroundColor": "#ebf8ff",
-                            "color": "#2b6cb0",
-                            "textDecoration": "none",
-                        },
+                        className="action-link",
                     )
                 ],
             ),
             html.Div(
-                style={"padding": "12px", "border": "1px dashed #ccc", "borderRadius": "6px", "color": "#666", "marginBottom": "16px"},
+                className="fit-note",
                 children=[
                     html.Div(t["click_fit_hint"]),
                     html.Div(t["angle_fit_function"]) if fit_requested else None,
@@ -834,7 +937,14 @@ def build_angle_page(df: pd.DataFrame = None, fit_requested: bool = False, lang:
                 ],
             ),
             build_measurement_controls(visible=False, lang=lang),
-            dcc.Graph(figure=build_angle_plot(DATA_FILE, fit_result=fit_result, lang=lang)),
+            html.Div(className="chart-panel", children=dcc.Graph(className="plot-panel", figure=build_angle_plot(df, fit_result=fit_result, lang=lang))),
+            html.Div(
+                className="chart-grid chart-grid--history",
+                children=[
+                    html.Div(className="chart-panel", children=dcc.Graph(className="plot-panel", figure=build_angle_fit_history_plot(fit_history, "A", lang=lang))),
+                    html.Div(className="chart-panel", children=dcc.Graph(className="plot-panel", figure=build_angle_fit_history_plot(fit_history, "n", lang=lang))),
+                ],
+            ),
         ],
     )
 
@@ -842,26 +952,102 @@ def build_angle_page(df: pd.DataFrame = None, fit_requested: bool = False, lang:
 def create_app() -> Dash:
     app = Dash(__name__, title=TRANSLATIONS.get("fr")["app_title"])
     app.layout = html.Div(
-        style={"padding": "24px", "fontFamily": "Arial, sans-serif"},
+        className="app-shell",
         children=[
             dcc.Location(id="url", refresh=False),
             html.Div(
-                style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "12px"},
+                className="topbar",
                 children=[
-                    html.Label("Lang:"),
-                    dcc.Dropdown(
-                        id="lang-select",
-                        options=[{"label": "Français", "value": "fr"}, {"label": "English", "value": "en"}],
-                        value="fr",
-                        clearable=False,
-                        style={"width": "160px"},
+                    html.Div(
+                        className="brand-lockup",
+                        children=[
+                            html.Span("CD", className="brand-mark"),
+                            html.Div([
+                                html.Div(TRANSLATIONS["fr"]["app_title"], className="brand-title"),
+                                html.Div("DETECTOR LAB / DATA SYSTEM", className="brand-caption"),
+                            ]),
+                        ],
+                    ),
+                    html.Div(
+                        className="topbar-actions",
+                        children=[
+                            html.Button(
+                                TRANSLATIONS["fr"]["export_images"],
+                                id="export-page-button",
+                                type="button",
+                                className="export-button",
+                                style={"display": "none"},
+                            ),
+                            html.Span(id="export-status", className="export-status", **{"aria-live": "polite"}),
+                            html.Div(
+                                className="language-control",
+                                children=[
+                                    html.Label("Lang:"),
+                                    dcc.Dropdown(
+                                        id="lang-select",
+                                        options=[{"label": "Français", "value": "fr"}, {"label": "English", "value": "en"}],
+                                        value="fr",
+                                        clearable=False,
+                                        className="language-select",
+                                    ),
+                                ],
+                            ),
+                        ],
                     ),
                 ],
             ),
-            html.Div(id="page-content", children=build_home_page(lang="fr")),
+            html.Div(id="page-content", className="page-slot", children=build_home_page(lang="fr")),
             dcc.Store(id="measurement-complete", data=0),
         ],
     )
+
+    @app.server.route("/api/export-page-images", methods=["POST"])
+    def export_page_images():
+        payload = request.get_json(silent=True) or {}
+        page_name = payload.get("page")
+        images = payload.get("images")
+        if page_name not in {"poisson", "trends", "angle"}:
+            return jsonify({"error": "Unsupported page"}), 400
+        if not isinstance(images, list) or not images or len(images) > 12:
+            return jsonify({"error": "Invalid image list"}), 400
+
+        png_images = []
+        prefix = "data:image/png;base64,"
+        for image in images:
+            data_url = image.get("data", "") if isinstance(image, dict) else ""
+            if not data_url.startswith(prefix) or len(data_url) > 20_000_000:
+                return jsonify({"error": "Invalid PNG data"}), 400
+            try:
+                image_bytes = base64.b64decode(data_url[len(prefix):], validate=True)
+            except (binascii.Error, ValueError):
+                return jsonify({"error": "Invalid PNG data"}), 400
+            if not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                return jsonify({"error": "Invalid PNG signature"}), 400
+            png_images.append(image_bytes)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        try:
+            EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+            filenames = []
+            for index, image_bytes in enumerate(png_images, start=1):
+                filename = f"{page_name}_{timestamp}_{index:02d}.png"
+                (EXPORT_DIR / filename).write_bytes(image_bytes)
+                filenames.append(filename)
+        except OSError:
+            return jsonify({"error": "Could not save exported images"}), 500
+
+        return jsonify({"directory": EXPORT_DIR.name, "files": filenames})
+
+    @app.callback(
+        Output("export-page-button", "children"),
+        Output("export-page-button", "style"),
+        Input("url", "pathname"),
+        Input("lang-select", "value"),
+    )
+    def update_export_button(pathname, lang):
+        t = TRANSLATIONS.get(lang, TRANSLATIONS["fr"])
+        visible = pathname in {"/poisson", "/trends", "/angle"}
+        return t["export_images"], {"display": "inline-flex" if visible else "none"}
 
     @app.callback(
         Output("page-content", "children"),
@@ -1012,6 +1198,10 @@ def build_poisson_fit_result(df: Union[pd.DataFrame, Path, str], column: str, ti
     }
 
 
+def _integer_count_axis_range(values: pd.Series):
+    return [float(np.floor(values.min()) - 0.5), float(np.ceil(values.max()) + 0.5)]
+
+
 def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, title: str, fit_result: Optional[Dict[str, Any]] = None, lang: str = "fr"):
     if not isinstance(df, pd.DataFrame):
         df = load_measurements(df)
@@ -1033,16 +1223,14 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
     if values.empty:
         return px.scatter(title=t["no_60s"].format(title))
 
-    histogram_max = max(10, int(np.ceil(values.max())))
-    expected_counts = fit_result.get("expected_counts") if fit_result is not None else None
-    if expected_counts is not None and len(expected_counts) > 0:
-        histogram_max = max(histogram_max, int(fit_result["bin_centers"][-1]))
+    x_range = _integer_count_axis_range(values)
     fig = go.Figure(data=[go.Histogram(
         x=values,
         name=title,
-        xbins=dict(start=-0.5, end=histogram_max + 0.5, size=1),
+        xbins=dict(start=x_range[0], end=x_range[1], size=1),
     )])
     fig.update_layout(title=t["histogram_title"].format(title))
+    expected_counts = fit_result.get("expected_counts") if fit_result is not None else None
     if expected_counts is not None and len(expected_counts) > 0:
         fig.add_trace(go.Scatter(
             x=fit_result["bin_centers"],
@@ -1054,7 +1242,7 @@ def build_static_histogram_figure(df: Union[pd.DataFrame, Path, str], column: st
     fig.update_layout(
         xaxis_title=title,
         yaxis_title="Nombre",
-        xaxis=dict(range=[-0.5, histogram_max + 0.5]),
+        xaxis=dict(range=x_range),
         template="plotly_white",
     )
     return fig
@@ -1084,11 +1272,9 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
     mean_value = float(values.mean())
     std_value = float(values.std(ddof=1)) if len(values) > 1 else 0.0
     uncertainty = std_value / np.sqrt(len(values)) if len(values) > 1 else 0.0
-    histogram_max = max(10, int(np.ceil(values.max())))
+    x_range = _integer_count_axis_range(values)
     expected_counts = fit_result.get("expected_counts") if fit_result is not None else None
-    if expected_counts is not None and len(expected_counts) > 0:
-        histogram_max = max(histogram_max, int(fit_result["bin_centers"][-1]))
-    histogram_bins = dict(start=-0.5, end=histogram_max + 0.5, size=1)
+    histogram_bins = dict(start=x_range[0], end=x_range[1], size=1)
 
     if len(filtered_df) == 1:
         frames = [go.Frame(data=[go.Histogram(x=[filtered_df.iloc[0][column]], xbins=histogram_bins)], name=str(filtered_df.iloc[0]["time"]))]
@@ -1105,7 +1291,7 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
     max_bin_count = 0
     if histogram_values:
         for values in histogram_values:
-            counts, _ = np.histogram(values, bins=np.arange(-0.5, histogram_max + 1.5, 1))
+            counts, _ = np.histogram(values, bins=np.arange(x_range[0], x_range[1] + 1.0, 1))
             max_bin_count = max(max_bin_count, int(counts.max()) if counts.size else 0)
     if max_bin_count == 0:
         max_bin_count = 1
@@ -1126,7 +1312,7 @@ def build_histogram_figure(df: Union[pd.DataFrame, Path, str], column: str, titl
         title=t["histogram_over_time"].format(title),
         xaxis_title=title,
         yaxis_title="Count",
-        xaxis=dict(range=[-0.5, histogram_max + 0.5]),
+        xaxis=dict(range=x_range),
         yaxis=dict(range=[0, max_bin_count + 1]),
         template="plotly_white",
         updatemenus=[{
