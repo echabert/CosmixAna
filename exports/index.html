@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analyseur du détecteur cosmique — Rapport des images exportées</title>
+<style>
+:root {
+    color-scheme: light;
+    --ink: #152b3a;
+    --ink-soft: #294655;
+    --text: #213845;
+    --muted: #627783;
+    --paper: #f2f6f6;
+    --surface: #ffffff;
+    --line: #d9e3e4;
+    --teal: #087f83;
+    --teal-dark: #066a70;
+    --teal-pale: #e1f2f0;
+    --coral: #d96b53;
+    --shadow: 0 8px 24px rgba(21, 43, 58, 0.07);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    color: var(--text);
+    background-color: var(--paper);
+    background-image:
+        linear-gradient(rgba(21, 43, 58, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(21, 43, 58, 0.025) 1px, transparent 1px);
+    background-size: 32px 32px;
+    font-family: "Avenir Next", Avenir, "Helvetica Neue", sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.app-shell {
+    min-height: 100vh;
+}
+
+.topbar {
+    display: flex;
+    min-height: 76px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 12px clamp(18px, 4vw, 56px);
+    color: #f6fbfb;
+    background: var(--ink);
+    border-bottom: 3px solid var(--teal);
+    box-shadow: 0 4px 16px rgba(13, 35, 48, 0.14);
+}
+
+.brand-lockup,
+.language-control {
+    display: flex;
+    align-items: center;
+}
+
+.brand-lockup {
+    gap: 13px;
+    min-width: 0;
+}
+
+.brand-mark {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    flex: 0 0 auto;
+    place-items: center;
+    color: #f4ffff;
+    background: var(--teal);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.brand-title {
+    overflow: hidden;
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.brand-caption {
+    margin-top: 1px;
+    color: #a9c4c8;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.language-control {
+    gap: 10px;
+    flex: 0 0 auto;
+}
+
+.topbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    min-width: 0;
+}
+
+.export-button {
+    min-height: 38px;
+    padding: 8px 13px;
+    color: #ffffff;
+    background: var(--teal);
+    border: 1px solid #39a9a6;
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 750;
+    white-space: nowrap;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.export-button:hover:not(:disabled) {
+    background: var(--teal-dark);
+    border-color: #62c0bc;
+}
+
+.export-button:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
+
+.export-status {
+    max-width: 200px;
+    color: #c4d9db;
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.language-control label {
+    color: #b7cbce;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.language-select {
+    width: 168px;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.language-select .Select-control {
+    min-height: 38px;
+    background: #ffffff;
+    border: 1px solid #b8cbce;
+    border-radius: 6px;
+}
+
+.language-select .Select-placeholder,
+.language-select .Select-value-label {
+    line-height: 36px !important;
+}
+
+.language-control .dash-dropdown-focus-target {
+    width: 100% !important;
+    max-width: 100%;
+}
+
+.page-slot {
+    min-height: calc(100vh - 76px);
+}
+
+.page-content {
+    width: min(1480px, 100%);
+    margin: 0 auto;
+    padding: 30px clamp(18px, 3.5vw, 52px) 56px;
+}
+
+.page-content > h2,
+.page-title {
+    margin: 0 0 7px;
+    color: var(--ink);
+    font-size: 30px;
+    font-weight: 750;
+    line-height: 1.2;
+}
+
+.page-content--home > p {
+    max-width: 680px;
+    margin: 0 0 22px;
+    color: var(--muted);
+    font-size: 16px;
+}
+
+.page-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 18px 0 22px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+}
+
+.page-nav a {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    padding: 7px 12px;
+    color: var(--ink-soft);
+    background: rgba(255, 255, 255, 0.76);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.page-nav a:hover,
+.page-nav a:focus-visible {
+    color: var(--teal-dark);
+    background: #ffffff;
+    border-color: #a6d1ce;
+    outline: none;
+}
+
+.summary-panel {
+    margin: 0 0 20px;
+    padding: 16px 18px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--teal);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    overflow-wrap: anywhere;
+}
+
+.summary-panel > b {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--ink);
+    font-size: 14px;
+}
+
+.summary-panel > div + div {
+    margin-top: 4px;
+}
+
+.summary-panel--poisson {
+    padding: 17px 19px 14px;
+}
+
+.poisson-summary-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 14px;
+    margin-bottom: 15px;
+}
+
+.poisson-summary-heading > b {
+    color: var(--ink);
+    font-size: 15px;
+}
+
+.poisson-summary-scope {
+    padding: 5px 9px;
+    color: var(--teal-dark);
+    background: var(--teal-pale);
+    border: 1px solid #b8ddda;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 750;
+}
+
+.poisson-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.poisson-summary-field {
+    min-width: 0;
+    padding-left: 10px;
+    border-left: 1px solid var(--line);
+}
+
+.poisson-summary-field__label {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+
+.poisson-summary-field__value {
+    display: block;
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.poisson-summary-compatibility {
+    margin-top: 13px;
+    padding-top: 10px;
+    color: var(--muted);
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.poisson-summary-empty {
+    color: var(--muted);
+}
+
+.summary-panel--hint {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px 18px;
+}
+
+.summary-panel--hint > b {
+    margin: 0;
+}
+
+.summary-panel--hint > div {
+    color: var(--muted);
+}
+
+.status-message {
+    margin: -5px 0 15px;
+    color: var(--teal-dark);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.section-rule {
+    height: 1px;
+    margin: 20px 0;
+    background: var(--line);
+    border: 0;
+}
+
+.measurement-controls {
+    gap: 12px !important;
+    margin: 0 0 20px !important;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+.control-field {
+    display: flex;
+    min-width: 190px;
+    flex: 1 1 190px;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.control-field--duration,
+.control-field--angle {
+    min-width: 145px;
+    flex: 0 1 180px;
+}
+
+.control-field label {
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.control-field input,
+.control-field .Select-control {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    color: var(--text);
+    background: #fbfdfd;
+    border: 1px solid #cbd8da;
+    border-radius: 6px;
+    font: inherit;
+}
+
+.control-field input:focus,
+.control-field .Select.is-focused > .Select-control {
+    border-color: var(--teal);
+    box-shadow: 0 0 0 3px rgba(8, 127, 131, 0.12);
+    outline: none;
+}
+
+.control-field .Select-placeholder,
+.control-field .Select-value-label {
+    line-height: 38px !important;
+}
+
+#run-button {
+    min-height: 40px;
+    padding: 9px 18px;
+    color: #ffffff;
+    background: var(--teal);
+    border: 1px solid var(--teal);
+    border-radius: 6px;
+    box-shadow: 0 3px 8px rgba(8, 127, 131, 0.18);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 750;
+    transition: background-color 120ms ease, transform 120ms ease;
+}
+
+#run-button:hover {
+    background: var(--teal-dark);
+    transform: translateY(-1px);
+}
+
+#run-button:focus-visible,
+.action-link:focus-visible {
+    outline: 3px solid rgba(8, 127, 131, 0.26);
+    outline-offset: 2px;
+}
+
+.measurement-progress {
+    margin: 0 0 20px !important;
+    padding: 12px 14px;
+    background: #e7f4f2;
+    border: 1px solid #b8ddda;
+    border-radius: 7px;
+}
+
+.measurement-progress__label {
+    margin-bottom: 7px;
+    color: var(--teal-dark);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.measurement-progress__track {
+    height: 9px;
+    overflow: hidden;
+    background: #c8dcda;
+    border-radius: 99px;
+}
+
+.measurement-progress__bar {
+    background: var(--teal);
+    border-radius: inherit;
+}
+
+.section-heading {
+    margin: 26px 0 12px;
+    color: var(--ink);
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.action-link {
+    display: inline-flex;
+    min-height: 38px;
+    align-items: center;
+    padding: 8px 14px;
+    color: #ffffff;
+    background: var(--teal);
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.action-link:hover {
+    background: var(--teal-dark);
+}
+
+.fit-action-row {
+    margin: 0 0 18px;
+}
+
+.fit-note {
+    margin: 14px 0 18px;
+    padding: 13px 16px;
+    color: var(--muted);
+    background: #fbf4e9;
+    border: 1px solid #ead9bb;
+    border-left: 4px solid #d59b4b;
+    border-radius: 7px;
+}
+
+.fit-note > div + div {
+    margin-top: 4px;
+    color: var(--ink-soft);
+    font-size: 13px;
+}
+
+.chart-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin: 14px 0 22px;
+}
+
+.chart-grid--three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.chart-grid--history {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chart-panel,
+.chart-grid > .dash-graph {
+    min-width: 0;
+    margin: 14px 0 20px;
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+.chart-grid > .dash-graph {
+    margin: 0;
+}
+
+.plot-panel {
+    min-width: 0;
+}
+
+.chart-panel .js-plotly-plot,
+.chart-grid .js-plotly-plot {
+    width: 100%;
+}
+
+.fit-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin: 10px 0 24px;
+}
+
+.fit-summary-grid > div {
+    padding: 13px 15px;
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--coral);
+    border-radius: 7px;
+    box-shadow: var(--shadow);
+}
+
+#measurements-table {
+    overflow: hidden;
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+#measurements-table .dash-spreadsheet-container .dash-spreadsheet-inner th {
+    color: var(--ink);
+    background: #e8f0f1;
+    font-size: 12px;
+    font-weight: 750;
+}
+
+#measurements-table .dash-spreadsheet-container .dash-spreadsheet-inner td {
+    color: var(--text);
+    font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+    .chart-grid--three {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .poisson-summary-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .topbar {
+        min-height: 68px;
+        flex-wrap: wrap;
+        padding: 10px 16px;
+    }
+
+    .brand-mark {
+        width: 38px;
+        height: 38px;
+    }
+
+    .brand-title {
+        max-width: 48vw;
+        font-size: 14px;
+    }
+
+    .brand-caption {
+        font-size: 9px;
+    }
+
+    .language-control {
+        gap: 6px;
+    }
+
+    .language-control label {
+        font-size: 11px;
+    }
+
+    .topbar-actions {
+        width: 100%;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    .export-status {
+        flex: 1 1 100px;
+        max-width: 140px;
+        text-align: right;
+    }
+
+    .language-select {
+        width: 126px;
+    }
+
+    .page-content {
+        padding: 23px 16px 40px;
+    }
+
+    .page-content > h2,
+    .page-title {
+        font-size: 25px;
+    }
+
+    .page-nav {
+        gap: 5px;
+    }
+
+    .page-nav a {
+        min-height: 33px;
+        padding: 6px 9px;
+        font-size: 12px;
+    }
+
+    .chart-grid,
+    .chart-grid--three,
+    .chart-grid--history,
+    .fit-summary-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .poisson-summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .measurement-controls {
+        padding: 13px;
+    }
+
+    .control-field,
+    .control-field--duration,
+    .control-field--angle {
+        min-width: 100%;
+        flex-basis: 100%;
+    }
+
+    #run-button {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+}
+
+.report-context {
+    max-width: 980px;
+    margin: 0 0 18px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+}
+.report-section {
+    margin-top: 34px;
+}
+.report-section > .section-heading {
+    margin-top: 0;
+}
+.report-batch {
+    margin: 0 0 22px;
+    padding: 16px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--teal);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+.report-batch-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+.report-figure {
+    margin: 0;
+}
+.report-figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+.report-figure figcaption {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+    .report-batch-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand-lockup">
+      <span class="brand-mark">CD</span>
+      <div>
+        <div class="brand-title">Analyseur du détecteur cosmique</div>
+        <div class="brand-caption">DETECTOR LAB / DATA SYSTEM</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="export-status">Rapport généré le 2026-10-02 09:33</span>
+    </div>
+  </header>
+  <main class="page-slot">
+    <div class="page-content">
+      <h1 class="page-title">Rapport des images exportées</h1>
+      <div class="page-nav"><a href="#poisson">Vérification de la loi de Poisson (prises de 60 secondes à 90°)</a><a href="#trends">Graphiques d&#x27;évolution en fonction du temps (détecteur en position verticale)</a><a href="#angle">Dépendance angulaire</a></div>
+      <div class="summary-panel">
+        <b>Rapport des images exportées</b>
+        <div>Cette page est générée automatiquement par l&#x27;application. Elle rassemble les images PNG enregistrées dans le dossier exports/ par le bouton « Exporter les images » des pages « Loi de Poisson », « Évolutions » et « Dépendance angulaire ». Chaque groupe correspond à un export daté d&#x27;une page : les figures sont identiques aux graphiques affichés dans l&#x27;application au moment de l&#x27;export.</div>
+      </div>
+      <section class="report-section" id="poisson"><h2 class="section-heading">Vérification de la loi de Poisson (prises de 60 secondes à 90°)</h2><p class="report-context">Vérification de la loi de Poisson sur les prises de 60 secondes à 90°. Les histogrammes montrent la distribution des taux de comptage (détecteur 1, détecteur 2 et coïncidences). Si les données suivent une loi de Poisson, la distribution observée correspond à une loi de Poisson de paramètre μ (la moyenne) ; le bouton « Activer l&#x27;ajustement » de l&#x27;application superpose cet ajustement avec sa probabilité χ². Les trois dernières figures montrent l&#x27;accumulation de chaque histogramme au fil des prises.</p><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 18:53:48</b><span class="poisson-summary-scope">6 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="poisson_20261001_185348_219965_01.png" alt="Histogramme de Taux de comptage du détecteur 1 (prises de 60 secondes à 90°)" loading="lazy"><figcaption>Histogramme de Taux de comptage du détecteur 1 (prises de 60 secondes à 90°)</figcaption></figure><figure class="report-figure"><img src="poisson_20261001_185348_219965_02.png" alt="Histogramme de Taux de comptage du détecteur 2 (prises de 60 secondes à 90°)" loading="lazy"><figcaption>Histogramme de Taux de comptage du détecteur 2 (prises de 60 secondes à 90°)</figcaption></figure><figure class="report-figure"><img src="poisson_20261001_185348_219965_03.png" alt="Histogramme de Coïncidences (prises de 60 secondes à 90°)" loading="lazy"><figcaption>Histogramme de Coïncidences (prises de 60 secondes à 90°)</figcaption></figure><figure class="report-figure"><img src="poisson_20261001_185348_219965_04.png" alt="Histogramme de Taux de comptage du détecteur 1 au fil du temps (prises de 60 secondes à 90°)" loading="lazy"><figcaption>Histogramme de Taux de comptage du détecteur 1 au fil du temps (prises de 60 secondes à 90°)</figcaption></figure><figure class="report-figure"><img src="poisson_20261001_185348_219965_05.png" alt="Histogramme de Taux de comptage du détecteur 2 au fil du temps (prises de 60 secondes à 90°)" loading="lazy"><figcaption>Histogramme de Taux de comptage du détecteur 2 au fil du temps (prises de 60 secondes à 90°)</figcaption></figure><figure class="report-figure"><img src="poisson_20261001_185348_219965_06.png" alt="Histogramme de Coïncidences au fil du temps (prises de 60 secondes à 90°)" loading="lazy"><figcaption>Histogramme de Coïncidences au fil du temps (prises de 60 secondes à 90°)</figcaption></figure></div></div></section><section class="report-section" id="trends"><h2 class="section-heading">Graphiques d&#x27;évolution en fonction du temps (détecteur en position verticale)</h2><p class="report-context">Évolution dans le temps des décomptes par minute, prise après prise (détecteur en position verticale), avec leurs incertitudes d&#x27;origine de Poisson. Le second graphique montre la moyenne cumulée de ces taux, qui se stabilise vers la valeur moyenne du flux de rayonnement cosmique.</p><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 19:06:08</b><span class="poisson-summary-scope">2 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="trends_20261001_190608_114136_01.png" alt="Décomptes par minute de chaque prise (détecteur en position verticale)" loading="lazy"><figcaption>Décomptes par minute de chaque prise (détecteur en position verticale)</figcaption></figure><figure class="report-figure"><img src="trends_20261001_190608_114136_02.png" alt="Moyenne cumulée des décomptes par minute (détecteur en position verticale)" loading="lazy"><figcaption>Moyenne cumulée des décomptes par minute (détecteur en position verticale)</figcaption></figure></div></div><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 19:06:10</b><span class="poisson-summary-scope">2 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="trends_20261001_190610_921010_01.png" alt="Décomptes par minute de chaque prise (détecteur en position verticale)" loading="lazy"><figcaption>Décomptes par minute de chaque prise (détecteur en position verticale)</figcaption></figure><figure class="report-figure"><img src="trends_20261001_190610_921010_02.png" alt="Moyenne cumulée des décomptes par minute (détecteur en position verticale)" loading="lazy"><figcaption>Moyenne cumulée des décomptes par minute (détecteur en position verticale)</figcaption></figure></div></div></section><section class="report-section" id="angle"><h2 class="section-heading">Dépendance angulaire</h2><p class="report-context">Dépendance angulaire du taux moyen de coïncidences par minute. Les points représentent le taux moyen de coïncidences pour chaque angle, ajusté avec le modèle f(θ) = A·cos(θ−π/2)^n (zone ombrée : incertitude de l&#x27;ajustement). Les deux derniers graphiques suivent l&#x27;évolution des paramètres ajustés A et n au fur et à mesure que les mesures sont ajoutées.</p><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 19:07:19</b><span class="poisson-summary-scope">3 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="angle_20261001_190719_561408_01.png" alt="Taux moyen de coïncidences par minute en fonction de l&#x27;angle" loading="lazy"><figcaption>Taux moyen de coïncidences par minute en fonction de l&#x27;angle</figcaption></figure><figure class="report-figure"><img src="angle_20261001_190719_561408_02.png" alt="Évolution de A selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de A selon les mesures ajoutées</figcaption></figure><figure class="report-figure"><img src="angle_20261001_190719_561408_03.png" alt="Évolution de n selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de n selon les mesures ajoutées</figcaption></figure></div></div><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 19:22:54</b><span class="poisson-summary-scope">3 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="angle_20261001_192254_902736_01.png" alt="Taux moyen de coïncidences par minute en fonction de l&#x27;angle" loading="lazy"><figcaption>Taux moyen de coïncidences par minute en fonction de l&#x27;angle</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192254_902736_02.png" alt="Évolution de A selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de A selon les mesures ajoutées</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192254_902736_03.png" alt="Évolution de n selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de n selon les mesures ajoutées</figcaption></figure></div></div><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 19:22:55</b><span class="poisson-summary-scope">3 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="angle_20261001_192255_959692_01.png" alt="Taux moyen de coïncidences par minute en fonction de l&#x27;angle" loading="lazy"><figcaption>Taux moyen de coïncidences par minute en fonction de l&#x27;angle</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192255_959692_02.png" alt="Évolution de A selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de A selon les mesures ajoutées</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192255_959692_03.png" alt="Évolution de n selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de n selon les mesures ajoutées</figcaption></figure></div></div><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 19:22:56</b><span class="poisson-summary-scope">3 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="angle_20261001_192256_693567_01.png" alt="Taux moyen de coïncidences par minute en fonction de l&#x27;angle" loading="lazy"><figcaption>Taux moyen de coïncidences par minute en fonction de l&#x27;angle</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192256_693567_02.png" alt="Évolution de A selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de A selon les mesures ajoutées</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192256_693567_03.png" alt="Évolution de n selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de n selon les mesures ajoutées</figcaption></figure></div></div><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-01 19:22:58</b><span class="poisson-summary-scope">3 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="angle_20261001_192258_417881_01.png" alt="Taux moyen de coïncidences par minute en fonction de l&#x27;angle" loading="lazy"><figcaption>Taux moyen de coïncidences par minute en fonction de l&#x27;angle</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192258_417881_02.png" alt="Évolution de A selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de A selon les mesures ajoutées</figcaption></figure><figure class="report-figure"><img src="angle_20261001_192258_417881_03.png" alt="Évolution de n selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de n selon les mesures ajoutées</figcaption></figure></div></div><div class="report-batch"><div class="poisson-summary-heading"><b>Export du 2026-10-02 09:33:17</b><span class="poisson-summary-scope">3 images</span></div><div class="report-batch-grid"><figure class="report-figure"><img src="angle_20261002_093317_539334_01.png" alt="Taux moyen de coïncidences par minute en fonction de l&#x27;angle" loading="lazy"><figcaption>Taux moyen de coïncidences par minute en fonction de l&#x27;angle</figcaption></figure><figure class="report-figure"><img src="angle_20261002_093317_539334_02.png" alt="Évolution de A selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de A selon les mesures ajoutées</figcaption></figure><figure class="report-figure"><img src="angle_20261002_093317_539334_03.png" alt="Évolution de n selon les mesures ajoutées" loading="lazy"><figcaption>Évolution de n selon les mesures ajoutées</figcaption></figure></div></div></section>
+    </div>
+  </main>
+</div>
+</body>
+</html>
